@@ -4,6 +4,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'screens/login_screen.dart';
 import 'screens/home_screen.dart';
 import 'providers/auth_provider.dart';
+import 'theme/app_theme.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -20,10 +21,7 @@ class MainApp extends ConsumerWidget {
 
     return MaterialApp(
       title: 'Dot Matrix Messenger',
-      theme: ThemeData(
-        primarySwatch: Colors.blue,
-        visualDensity: VisualDensity.adaptivePlatformDensity,
-      ),
+      theme: AppTheme.lightTheme,
       home: authState.when(
         data: (user) => user != null ? const HomeScreen() : const LoginScreen(),
         loading: () => const Scaffold(body: Center(child: CircularProgressIndicator())),

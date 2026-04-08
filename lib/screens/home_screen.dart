@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../providers/auth_provider.dart';
 import '../providers/room_provider.dart';
 import 'chat_screen.dart';
+import 'settings_screen.dart';
 
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
@@ -12,72 +12,167 @@ class HomeScreen extends ConsumerWidget {
     final roomsAsync = ref.watch(roomsProvider);
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Chats'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.logout),
-            onPressed: () => ref.read(authProvider.notifier).logout(),
+      body: SafeArea(
+        child: Column(
+          children: [
+            _buildHeader(context),
+            _buildSearchBar(),
+            Expanded(
+              child: roomsAsync.when(
+                data: (rooms) => ListView.builder(
+                  padding: const EdgeInsets.only(top: 8),
+                  itemCount: rooms.length,
+                  itemBuilder: (context, index) {
+                    final room = rooms[index];
+                    return _buildChatItem(context, room);
+                  },
+                ),
+                loading: () => const Center(child: CircularProgressIndicator()),
+                error: (error, stack) => Center(child: Text('Error: $error')),
+              ),
+            ),
+          ],
+        ),
+      ),
+      bottomNavigationBar: BottomNavigationBar(
+        currentIndex: 0,
+        items: const [
+          BottomNavigationBarItem(
+            icon: Icon(Icons.chat_bubble),
+            label: 'Chats',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.amp_stories),
+            label: 'Stories',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.menu),
+            label: 'Menu',
           ),
         ],
-      ),
-      body: roomsAsync.when(
-        data: (rooms) => ListView.builder(
-          itemCount: rooms.length,
-          itemBuilder: (context, index) {
-            final room = rooms[index];
-            return ListTile(
-              leading: CircleAvatar(
-                child: Text(room.displayname[0].toUpperCase()),
-              ),
-              title: Text(room.displayname),
-              subtitle: Text(room.lastMessage ?? 'No messages'),
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => ChatScreen(room: room)),
-              ),
-            );
-          },
-        ),
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (error, stack) => Center(child: Text('Error: $error')),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () => _showCreateRoomDialog(context, ref),
-        child: const Icon(Icons.add),
       ),
     );
   }
 
-  void _showCreateRoomDialog(BuildContext context, WidgetRef ref) {
-    final controller = TextEditingController();
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Create Room'),
-        content: TextField(
-          controller: controller,
-          decoration: const InputDecoration(labelText: 'Room Name'),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
+  Widget _buildHeader(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Row(
+            children: [
+              GestureDetector(
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const SettingsScreen()),
+                  );
+                },
+                child: const Icon(Icons.menu, size: 28, color: Colors.blue), // Or simple hamburger
+              ),
+              const SizedBox(width: 16),
+              const Text(
+                'DotMatrix',
+                style: TextStyle(
+                  fontSize: 28,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: -0.5,
+                ),
+              ),
+            ],
           ),
-          TextButton(
-            onPressed: () async {
-              final name = controller.text.trim();
-              if (name.isNotEmpty) {
-                // For dummy, just add to list, but since provider, hard. For now, show snackbar
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Room "$name" created (dummy)')),
-                );
-                Navigator.pop(context);
-              }
-            },
-            child: const Text('Create'),
+          Row(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.edit),
+                onPressed: () {},
+                color: Colors.black,
+              ),
+            ],
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildSearchBar() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+      child: TextField(
+        decoration: InputDecoration(
+          hintText: 'Search Messages',
+          prefixIcon: ShaderMask(
+            shaderCallback: (bounds) => const LinearGradient(
+              colors: [Colors.blue, Colors.purple],
+            ).createShader(bounds),
+            child: const Icon(Icons.search, color: Colors.white),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildChatItem(BuildContext context, dynamic room) {
+    // room is an AppRoom
+    return InkWell(
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => ChatScreen(room: room)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+        child: Row(
+          children: [
+            CircleAvatar(
+              radius: 28,
+              backgroundColor: Colors.blue[100],
+              child: Text(
+                room.displayname[0].toUpperCase(),
+                style: const TextStyle(fontSize: 20, color: Colors.blue, fontWeight: FontWeight.bold),
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    room.displayname,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          room.lastMessage ?? 'No messages yet',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Colors.grey[600],
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        '· 9:41 am', // Dummy time
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey[500],
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
