@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/room_model.dart';
+import '../theme/app_theme.dart';
 import '../widgets/message_bubble.dart';
 
 class ChatScreen extends ConsumerStatefulWidget {
@@ -19,11 +20,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final displayedMessages = widget.room.messages.reversed.toList();
+
     return Scaffold(
+      backgroundColor: const Color(0xFFF7F8FC),
       appBar: AppBar(
         leadingWidth: 40,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.blue),
+          icon: const Icon(Icons.arrow_back, color: AppTheme.primaryBlue),
           onPressed: () => Navigator.pop(context),
         ),
         title: Row(
@@ -33,10 +37,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               children: [
                 CircleAvatar(
                   radius: 16,
-                  backgroundColor: Colors.blue[100],
+                  backgroundColor: const Color(0xFFEAF3FF),
                   child: Text(
                     widget.room.displayname[0].toUpperCase(),
-                    style: const TextStyle(fontSize: 12, color: Colors.blue, fontWeight: FontWeight.bold),
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: AppTheme.primaryBlue,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
                 Positioned(
@@ -61,12 +69,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 children: [
                   Text(
                     widget.room.displayname,
-                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.black),
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.black,
+                    ),
                     overflow: TextOverflow.ellipsis,
                   ),
                   const Text(
                     'Active now',
-                    style: TextStyle(fontSize: 12, color: Colors.black54, fontWeight: FontWeight.normal),
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.black54,
+                      fontWeight: FontWeight.normal,
+                    ),
                   ),
                 ],
               ),
@@ -75,11 +91,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.phone, color: Colors.blue),
+            icon: const Icon(Icons.phone, color: AppTheme.primaryBlue),
             onPressed: () {},
           ),
           IconButton(
-            icon: const Icon(Icons.videocam, color: Colors.blue),
+            icon: const Icon(Icons.videocam, color: AppTheme.primaryBlue),
             onPressed: () {},
           ),
         ],
@@ -91,11 +107,31 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               child: ListView.builder(
                 controller: _scrollController,
                 reverse: true,
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
-                itemCount: widget.room.messages.length,
+                padding: const EdgeInsets.fromLTRB(12, 18, 12, 20),
+                itemCount: displayedMessages.length,
                 itemBuilder: (context, index) {
-                  final event = widget.room.messages[widget.room.messages.length - 1 - index];
-                  return MessageBubble(event: event, isMe: event.isMe, isMetaAi: false);
+                  final event = displayedMessages[index];
+                  final olderMessage = index < displayedMessages.length - 1
+                      ? displayedMessages[index + 1]
+                      : null;
+                  final newerMessage = index > 0
+                      ? displayedMessages[index - 1]
+                      : null;
+
+                  final isFirstInGroup =
+                      olderMessage == null ||
+                      !_isSameSender(event, olderMessage);
+                  final isLastInGroup =
+                      newerMessage == null ||
+                      !_isSameSender(event, newerMessage);
+
+                  return MessageBubble(
+                    event: event,
+                    isMe: event.isMe,
+                    isMetaAi: false,
+                    isFirstInGroup: isFirstInGroup,
+                    isLastInGroup: isLastInGroup,
+                  );
                 },
               ),
             ),
@@ -108,34 +144,55 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
   Widget _buildMessageInput() {
     return Container(
-      color: Colors.white,
-      padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 8.0),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 16,
+            offset: const Offset(0, -2),
+          ),
+        ],
+      ),
+      padding: const EdgeInsets.fromLTRB(8, 10, 8, 10),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           IconButton(
-            icon: const Icon(Icons.add_circle, color: Colors.blue, size: 28),
+            icon: const Icon(
+              Icons.add_circle,
+              color: AppTheme.primaryBlue,
+              size: 28,
+            ),
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(),
             onPressed: () {},
           ),
           const SizedBox(width: 12),
           IconButton(
-            icon: const Icon(Icons.camera_alt, color: Colors.blue, size: 28),
+            icon: const Icon(
+              Icons.camera_alt,
+              color: AppTheme.primaryBlue,
+              size: 28,
+            ),
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(),
             onPressed: () {},
           ),
           const SizedBox(width: 12),
           IconButton(
-            icon: const Icon(Icons.image, color: Colors.blue, size: 28),
+            icon: const Icon(
+              Icons.image,
+              color: AppTheme.primaryBlue,
+              size: 28,
+            ),
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(),
             onPressed: () {},
           ),
           const SizedBox(width: 12),
           IconButton(
-            icon: const Icon(Icons.mic, color: Colors.blue, size: 28),
+            icon: const Icon(Icons.mic, color: AppTheme.primaryBlue, size: 28),
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(),
             onPressed: () {},
@@ -150,9 +207,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 hintText: 'Aa',
                 hintStyle: TextStyle(color: Colors.grey[500]),
                 isDense: true,
-                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 10,
+                ),
+                fillColor: const Color(0xFFF0F2F5),
                 suffixIcon: IconButton(
-                  icon: const Icon(Icons.sentiment_satisfied_alt, color: Colors.blue),
+                  icon: const Icon(
+                    Icons.sentiment_satisfied_alt,
+                    color: AppTheme.primaryBlue,
+                  ),
                   onPressed: () {},
                   padding: EdgeInsets.zero,
                   constraints: const BoxConstraints(),
@@ -162,7 +226,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           ),
           const SizedBox(width: 12),
           IconButton(
-            icon: const Icon(Icons.thumb_up, color: Colors.blue, size: 28),
+            icon: const Icon(
+              Icons.thumb_up,
+              color: AppTheme.primaryBlue,
+              size: 28,
+            ),
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(),
             onPressed: _sendMessage,
@@ -175,11 +243,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   void _sendMessage() {
     final text = _messageController.text.trim();
     if (text.isNotEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Message sent: $text (dummy)')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Message sent: $text (dummy)')));
       _messageController.clear();
     }
+  }
+
+  bool _isSameSender(AppEvent current, AppEvent other) {
+    return current.senderId == other.senderId && current.isMe == other.isMe;
   }
 
   @override
