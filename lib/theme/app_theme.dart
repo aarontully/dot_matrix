@@ -2,9 +2,13 @@ import 'package:flutter/material.dart';
 
 class AppTheme {
   static const Color primaryBlue = Color(0xFF0084FF); // Messenger classic blue
-  static const Color messageGray = Color(0xFFE4E6EB); // Chat bubble gray for received
+  static const Color messageGray = Color(
+    0xFFE4E6EB,
+  ); // Chat bubble gray for received
   static const Color scaffoldBackground = Colors.white;
-  static const Color settingsBackground = Color(0xFFF1F5FB); // Light blueish white for settings
+  static const Color settingsBackground = Color(
+    0xFFF1F5FB,
+  ); // Light blueish white for settings
 
   static ThemeData get lightTheme {
     return ThemeData(
@@ -53,11 +57,9 @@ class AppTheme {
         ),
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       ),
-      iconTheme: const IconThemeData(
-        color: primaryBlue,
-      ),
+      iconTheme: const IconThemeData(color: primaryBlue),
       dividerTheme: DividerThemeData(
-        color: Colors.grey.withOpacity(0.2),
+        color: Colors.grey.withValues(alpha: 0.2),
         thickness: 1,
         space: 1,
       ),

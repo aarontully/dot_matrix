@@ -1,12 +1,16 @@
 import 'package:flutter/material.dart';
 
+import '../theme/app_theme.dart';
+
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF1F5FB), // Off-white/light blue background
+      backgroundColor: const Color(
+        0xFFF1F5FB,
+      ), // Off-white/light blue background
       appBar: AppBar(
         leadingWidth: 40,
         backgroundColor: Colors.transparent,
@@ -22,22 +26,41 @@ class SettingsScreen extends StatelessWidget {
             _buildProfileHeader(),
             const SizedBox(height: 24),
             _buildSettingsGroup([
-              _buildSettingsRow(Icons.dark_mode, 'Dark mode', trailingText: 'System'),
-              _buildSettingsRow(Icons.circle_rounded, 'Active status', trailingText: 'On', iconColor: Colors.green),
-              _buildSettingsRow(Icons.accessibility_new, 'Accessibility'),
+              _buildSettingsRow(Icons.manage_accounts_outlined, 'Account'),
+              _buildSettingsRow(
+                Icons.palette_outlined,
+                'Appearance',
+                trailingText: 'Light',
+              ),
+              _buildSettingsRow(
+                Icons.circle_rounded,
+                'Active status',
+                trailingText: 'On',
+                iconColor: Colors.green,
+              ),
               _buildSettingsRow(Icons.shield, 'Privacy & safety'),
             ]),
             const SizedBox(height: 16),
             _buildSettingsGroup([
+              _buildSettingsRow(
+                Icons.notifications_outlined,
+                'Notifications & sounds',
+                trailingText: 'On',
+              ),
+              _buildSettingsRow(Icons.devices_outlined, 'Devices & sessions'),
               _buildSettingsRow(Icons.face, 'Avatar'),
-              _buildSettingsRow(Icons.notifications, 'Notification & sounds', trailingText: 'On'),
-              _buildSettingsRow(Icons.shopping_bag, 'Orders'),
-              _buildSettingsRow(Icons.payment, 'Payments'),
-              _buildSettingsRow(Icons.photo_library, 'Photos & media'),
+              _buildSettingsRow(Icons.storage_outlined, 'Storage & media'),
+              _buildSettingsRow(Icons.key_outlined, 'Encryption keys'),
             ]),
             const SizedBox(height: 16),
             _buildSettingsGroup([
-              _buildSettingsRow(Icons.report_problem, 'Report a problem', hideChevron: true),
+              _buildSettingsRow(Icons.help_outline, 'Help'),
+              _buildSettingsRow(Icons.info_outline, 'About DotMatrix'),
+              _buildSettingsRow(
+                Icons.report_problem,
+                'Report a problem',
+                hideChevron: true,
+              ),
             ]),
             const SizedBox(height: 40),
           ],
@@ -53,9 +76,8 @@ class SettingsScreen extends StatelessWidget {
           children: [
             const CircleAvatar(
               radius: 48,
-              backgroundColor: Colors.pinkAccent,
-              backgroundImage: AssetImage('assets/images/placeholder_avatar.png'), // Provide a dummy or remove
-              child: Icon(Icons.person, size: 48, color: Colors.white), // Fallback
+              backgroundColor: Color(0xFFEAF3FF),
+              child: Icon(Icons.person, size: 48, color: AppTheme.primaryBlue),
             ),
             Positioned(
               bottom: 0,
@@ -66,14 +88,18 @@ class SettingsScreen extends StatelessWidget {
                   color: Colors.white,
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(Icons.camera_alt, size: 20, color: Colors.black87),
+                child: const Icon(
+                  Icons.camera_alt,
+                  size: 20,
+                  color: Colors.black87,
+                ),
               ),
             ),
           ],
         ),
         const SizedBox(height: 16),
         const Text(
-          'Alex Walker',
+          'Your Matrix profile',
           style: TextStyle(
             fontSize: 24,
             fontWeight: FontWeight.bold,
@@ -83,10 +109,10 @@ class SettingsScreen extends StatelessWidget {
         ),
         const SizedBox(height: 4),
         const Text(
-          'Leave a note',
+          'Customize your identity, devices, and room behavior',
           style: TextStyle(
-            fontSize: 16,
-            color: Colors.blue,
+            fontSize: 15,
+            color: AppTheme.primaryBlue,
             fontWeight: FontWeight.w500,
           ),
         ),
@@ -101,9 +127,7 @@ class SettingsScreen extends StatelessWidget {
         color: Colors.white,
         borderRadius: BorderRadius.circular(20),
       ),
-      child: Column(
-        children: children,
-      ),
+      child: Column(children: children),
     );
   }
 
@@ -133,15 +157,12 @@ class SettingsScreen extends StatelessWidget {
           if (trailingText != null)
             Text(
               trailingText,
-              style: TextStyle(
-                fontSize: 16,
-                color: Colors.grey[600],
-              ),
+              style: TextStyle(fontSize: 16, color: Colors.grey[600]),
             ),
           if (!hideChevron) ...[
             const SizedBox(width: 8),
             Icon(Icons.chevron_right, color: Colors.grey[400], size: 20),
-          ]
+          ],
         ],
       ),
     );
