@@ -1,29 +1,49 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:get/get.dart';
 
+import '../controllers/settings_controller.dart';
 import '../models/room_model.dart';
 import '../theme/app_theme.dart';
 import '../widgets/message_bubble.dart';
+import 'app_settings_screen.dart';
 
-class ChatScreen extends ConsumerStatefulWidget {
+class ChatScreen extends StatefulWidget {
   final AppRoom room;
 
   const ChatScreen({super.key, required this.room});
 
   @override
-  ConsumerState<ChatScreen> createState() => _ChatScreenState();
+  State<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends ConsumerState<ChatScreen> {
+class _ChatScreenState extends State<ChatScreen> {
   final _messageController = TextEditingController();
   final _scrollController = ScrollController();
+  bool _isTyping = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _messageController.addListener(() {
+      final isTyping = _messageController.text.trim().isNotEmpty;
+      if (isTyping != _isTyping) {
+        setState(() {
+          _isTyping = isTyping;
+        });
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     final displayedMessages = widget.room.messages.reversed.toList();
+    final theme = Theme.of(context);
+    final isWaitingForKey = widget.room.messages.any(
+      (event) => event.body == 'Waiting for room key...',
+    );
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF7F8FC),
+      backgroundColor: theme.scaffoldBackgroundColor,
       appBar: AppBar(
         leadingWidth: 40,
         leading: IconButton(
@@ -69,18 +89,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 children: [
                   Text(
                     widget.room.displayname,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.w600,
-                      color: Colors.black,
+                      color: theme.colorScheme.onSurface,
                     ),
                     overflow: TextOverflow.ellipsis,
                   ),
-                  const Text(
+                  Text(
                     'Active now',
                     style: TextStyle(
                       fontSize: 12,
-                      color: Colors.black54,
+                      color: theme.colorScheme.onSurface.withValues(
+                        alpha: 0.54,
+                      ),
                       fontWeight: FontWeight.normal,
                     ),
                   ),
@@ -103,6 +125,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       body: SafeArea(
         child: Column(
           children: [
+            if (isWaitingForKey) _buildRecoveryBanner(theme),
             Expanded(
               child: ListView.builder(
                 controller: _scrollController,
@@ -135,67 +158,93 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 },
               ),
             ),
-            _buildMessageInput(),
+            _buildMessageInput(theme),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildMessageInput() {
+  Widget _buildRecoveryBanner(ThemeData theme) {
     return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 16,
-            offset: const Offset(0, -2),
+        color: const Color(0xFFFFF4E8),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: const Color(0xFFFFD7AC)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.key_outlined, color: Color(0xFFC96A12)),
+              SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'This chat is still waiting on a room key',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'Ask another verified device again, or open recovery tools if this is a new device.',
+            style: TextStyle(
+              color: theme.colorScheme.onSurface.withValues(alpha: 0.78),
+              height: 1.4,
+            ),
+          ),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              FilledButton.icon(
+                onPressed: _askDevicesAgain,
+                icon: const Icon(Icons.devices_outlined),
+                label: const Text('Ask devices again'),
+              ),
+              OutlinedButton.icon(
+                onPressed: _openRecoveryTools,
+                icon: const Icon(Icons.tune),
+                label: const Text('Open recovery tools'),
+              ),
+            ],
           ),
         ],
       ),
-      padding: const EdgeInsets.fromLTRB(8, 10, 8, 10),
+    );
+  }
+
+  Widget _buildMessageInput(ThemeData theme) {
+    final isDark = theme.brightness == Brightness.dark;
+
+    return Container(
+      color: theme.scaffoldBackgroundColor,
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 16),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          IconButton(
-            icon: const Icon(
-              Icons.add_circle,
-              color: AppTheme.primaryBlue,
-              size: 28,
+          Container(
+            margin: const EdgeInsets.only(bottom: 4),
+            decoration: BoxDecoration(
+              color: isDark ? Colors.white : Colors.black87,
+              shape: BoxShape.circle,
             ),
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(),
-            onPressed: () {},
-          ),
-          const SizedBox(width: 12),
-          IconButton(
-            icon: const Icon(
-              Icons.camera_alt,
-              color: AppTheme.primaryBlue,
-              size: 28,
+            child: IconButton(
+              icon: Icon(
+                Icons.add,
+                color: isDark ? Colors.black : Colors.white,
+                size: 24,
+              ),
+              padding: const EdgeInsets.all(8),
+              constraints: const BoxConstraints(),
+              onPressed: () {},
             ),
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(),
-            onPressed: () {},
-          ),
-          const SizedBox(width: 12),
-          IconButton(
-            icon: const Icon(
-              Icons.image,
-              color: AppTheme.primaryBlue,
-              size: 28,
-            ),
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(),
-            onPressed: () {},
-          ),
-          const SizedBox(width: 12),
-          IconButton(
-            icon: const Icon(Icons.mic, color: AppTheme.primaryBlue, size: 28),
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(),
-            onPressed: () {},
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -203,38 +252,37 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               controller: _messageController,
               minLines: 1,
               maxLines: 4,
+              textInputAction: TextInputAction.send,
+              onSubmitted: (_) => _sendMessage(),
               decoration: InputDecoration(
-                hintText: 'Aa',
-                hintStyle: TextStyle(color: Colors.grey[500]),
+                hintText: 'Message...',
+                hintStyle: TextStyle(
+                  color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
+                ),
                 isDense: true,
                 contentPadding: const EdgeInsets.symmetric(
                   horizontal: 16,
-                  vertical: 10,
-                ),
-                fillColor: const Color(0xFFF0F2F5),
-                suffixIcon: IconButton(
-                  icon: const Icon(
-                    Icons.sentiment_satisfied_alt,
-                    color: AppTheme.primaryBlue,
-                  ),
-                  onPressed: () {},
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(),
+                  vertical: 12,
                 ),
               ),
             ),
           ),
-          const SizedBox(width: 12),
-          IconButton(
-            icon: const Icon(
-              Icons.thumb_up,
-              color: AppTheme.primaryBlue,
-              size: 28,
+          if (_isTyping) ...[
+            const SizedBox(width: 12),
+            Container(
+              margin: const EdgeInsets.only(bottom: 4),
+              decoration: const BoxDecoration(
+                color: Color(0xFF00C875), // Bright green
+                shape: BoxShape.circle,
+              ),
+              child: IconButton(
+                icon: const Icon(Icons.send, color: Colors.white, size: 20),
+                padding: const EdgeInsets.all(10),
+                constraints: const BoxConstraints(),
+                onPressed: _sendMessage,
+              ),
             ),
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(),
-            onPressed: _sendMessage,
-          ),
+          ],
         ],
       ),
     );
@@ -252,6 +300,29 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
   bool _isSameSender(AppEvent current, AppEvent other) {
     return current.senderId == other.senderId && current.isMe == other.isMe;
+  }
+
+  Future<void> _askDevicesAgain() async {
+    try {
+      final message = await Get.find<SettingsController>()
+          .requestEncryptedHistoryFromVerifiedDevices();
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.toString())));
+    }
+  }
+
+  void _openRecoveryTools() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const AppSettingsScreen()),
+    );
   }
 
   @override

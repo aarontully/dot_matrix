@@ -1,32 +1,36 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:get/get.dart';
 import 'package:intl/intl.dart';
 
 import '../models/room_model.dart';
-import '../providers/auth_provider.dart';
-import '../providers/room_provider.dart';
+import '../models/settings_state.dart';
+import '../controllers/auth_controller.dart';
+import '../controllers/room_controller.dart';
+import '../controllers/settings_controller.dart';
 import '../theme/app_theme.dart';
+import 'app_settings_screen.dart';
 import 'chat_screen.dart';
+import 'compose_screen.dart';
 import 'settings_screen.dart';
 
 enum _HomeTab { chats, activity, menu }
 
 enum _ActivityKind { incoming, outgoing, quiet }
 
-class HomeScreen extends ConsumerStatefulWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
   @override
-  ConsumerState<HomeScreen> createState() => _HomeScreenState();
+  State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends ConsumerState<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> {
   int _selectedIndex = 0;
   String _searchQuery = '';
 
   @override
   Widget build(BuildContext context) {
-    final roomsAsync = ref.watch(roomsProvider);
+    final roomController = Get.find<RoomController>();
     final selectedTab = _HomeTab.values[_selectedIndex];
 
     return Scaffold(
@@ -37,20 +41,18 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             if (selectedTab != _HomeTab.menu) _buildSearchBar(selectedTab),
             Expanded(
               child: switch (selectedTab) {
-                _HomeTab.chats => roomsAsync.when(
-                  data: _buildChatsTab,
-                  loading: () =>
-                      const Center(child: CircularProgressIndicator()),
-                  error: (error, _) => _buildErrorState(
+                _HomeTab.chats => roomController.obx(
+                  (rooms) => _buildChatsTab(rooms ?? []),
+                  onLoading: const Center(child: CircularProgressIndicator()),
+                  onError: (error) => _buildErrorState(
                     'We could not load your rooms yet.',
                     error.toString(),
                   ),
                 ),
-                _HomeTab.activity => roomsAsync.when(
-                  data: _buildActivityTab,
-                  loading: () =>
-                      const Center(child: CircularProgressIndicator()),
-                  error: (error, _) => _buildErrorState(
+                _HomeTab.activity => roomController.obx(
+                  (rooms) => _buildActivityTab(rooms ?? []),
+                  onLoading: const Center(child: CircularProgressIndicator()),
+                  onError: (error) => _buildErrorState(
                     'We could not build your activity feed yet.',
                     error.toString(),
                   ),
@@ -91,7 +93,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       child: Row(
         children: [
           InkWell(
-            onTap: () => _openSettings(context),
+            onTap: () => _openProfile(context),
             borderRadius: BorderRadius.circular(18),
             child: Container(
               width: 42,
@@ -131,10 +133,23 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             ),
           ),
           IconButton(
-            icon: Icon(_headerActionIcon(tab), color: Colors.black87),
+            icon: Icon(
+              _headerActionIcon(tab),
+              color:
+                  Theme.of(context).appBarTheme.foregroundColor ??
+                  Theme.of(context).colorScheme.onSurface,
+            ),
             onPressed: () {
               if (tab == _HomeTab.menu) {
-                ref.read(authProvider.notifier).logout();
+                Get.find<AuthController>().logout();
+                return;
+              }
+
+              if (tab == _HomeTab.chats) {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const ComposeScreen()),
+                );
                 return;
               }
 
@@ -265,31 +280,97 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           ),
         ),
         const SizedBox(height: 20),
+        GetBuilder<SettingsController>(
+          builder: (settingsController) {
+            final settings = settingsController.state;
+            if (settings == null ||
+                settings.isDemoMode ||
+                !settings.encryptionEnabled ||
+                settings.encryptedHistoryReady) {
+              return const SizedBox.shrink();
+            }
+
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 20),
+              child: Container(
+                padding: const EdgeInsets.all(18),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFF4E8),
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(color: const Color(0xFFFFD7AC)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Row(
+                      children: [
+                        Icon(Icons.key_outlined, color: Color(0xFFC96A12)),
+                        SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            'Finish encrypted history setup',
+                            style: TextStyle(
+                              fontSize: 17,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      settings.secureBackupAvailable
+                          ? 'This device is connected, but it still needs your backup keys to read older secure history smoothly.'
+                          : 'This device can chat securely, but older secure history may still depend on another trusted device sharing keys.',
+                      style: TextStyle(
+                        color: Colors.black.withValues(alpha: 0.75),
+                        height: 1.4,
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 10,
+                      children: [
+                        FilledButton.icon(
+                          onPressed: settings.isRestoringEncryption
+                              ? null
+                              : () => _askDevicesAgain(context),
+                          icon: const Icon(Icons.devices_outlined),
+                          label: const Text('Ask devices again'),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: () => _openAppSettings(context),
+                          icon: const Icon(Icons.tune),
+                          label: const Text('Open recovery tools'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
         _buildMenuSection(
           children: [
             _buildMenuTile(
               icon: Icons.person_outline,
-              title: 'Profile & settings',
-              subtitle: 'Account, appearance, privacy, and sessions',
-              onTap: () => _openSettings(context),
+              title: 'Profile',
+              subtitle: 'Avatar, display name, and status note',
+              onTap: () => _openProfile(context),
             ),
             _buildMenuTile(
-              icon: Icons.notifications_none,
-              title: 'Notifications',
-              subtitle: 'Fine-tune room and direct message alerts',
-              onTap: () => _openSettings(context),
-            ),
-            _buildMenuTile(
-              icon: Icons.security_outlined,
-              title: 'Session safety',
-              subtitle: 'Review devices and keep sign-in simple',
-              onTap: () => _openSettings(context),
+              icon: Icons.tune,
+              title: 'App settings',
+              subtitle: _menuSettingsSubtitle(),
+              onTap: () => _openAppSettings(context),
             ),
           ],
         ),
         const SizedBox(height: 20),
         FilledButton.tonalIcon(
-          onPressed: () => ref.read(authProvider.notifier).logout(),
+          onPressed: () => Get.find<AuthController>().logout(),
           icon: const Icon(Icons.logout),
           label: const Text('Sign out'),
         ),
@@ -637,9 +718,18 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             return haystack.contains(normalizedQuery);
           }).toList();
 
-    filteredRooms.sort(
-      (a, b) => _roomActivityAt(b).compareTo(_roomActivityAt(a)),
-    );
+    final sortOrder =
+        Get.find<SettingsController>().state?.chatSortOrder ??
+        ChatSortOrder.newest;
+
+    filteredRooms.sort((a, b) {
+      if (sortOrder == ChatSortOrder.unreadFirst) {
+        if (a.hasUnread && !b.hasUnread) return -1;
+        if (!a.hasUnread && b.hasUnread) return 1;
+      }
+      return _roomActivityAt(b).compareTo(_roomActivityAt(a));
+    });
+
     return filteredRooms;
   }
 
@@ -753,10 +843,46 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     };
   }
 
-  void _openSettings(BuildContext context) {
+  String _menuSettingsSubtitle() {
+    final settings = Get.find<SettingsController>().state;
+    if (settings == null) {
+      return 'Notifications, appearance, encryption, and device safety';
+    }
+    if (!settings.isDemoMode &&
+        settings.encryptionEnabled &&
+        !settings.encryptedHistoryReady) {
+      return 'Finish encrypted history recovery for this device';
+    }
+    return 'Notifications, appearance, encryption, and device safety';
+  }
+
+  Future<void> _askDevicesAgain(BuildContext context) async {
+    try {
+      final message = await Get.find<SettingsController>()
+          .requestEncryptedHistoryFromVerifiedDevices();
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.toString())));
+    }
+  }
+
+  void _openProfile(BuildContext context) {
     Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => const SettingsScreen()),
+    );
+  }
+
+  void _openAppSettings(BuildContext context) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const AppSettingsScreen()),
     );
   }
 }

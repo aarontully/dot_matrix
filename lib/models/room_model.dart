@@ -2,12 +2,14 @@ class AppRoom {
   final String id;
   final String displayname;
   final String? lastMessage;
+  final bool hasUnread;
   final List<AppEvent> messages;
 
   AppRoom({
     required this.id,
     required this.displayname,
     this.lastMessage,
+    this.hasUnread = false,
     required this.messages,
   });
 }

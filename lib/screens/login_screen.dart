@@ -1,54 +1,169 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../providers/auth_provider.dart';
+import 'package:get/get.dart';
 
-class LoginScreen extends ConsumerStatefulWidget {
+import '../controllers/auth_controller.dart';
+import '../theme/app_theme.dart';
+
+class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
   @override
-  ConsumerState<LoginScreen> createState() => _LoginScreenState();
+  State<LoginScreen> createState() => _LoginScreenState();
 }
 
-class _LoginScreenState extends ConsumerState<LoginScreen> {
+class _LoginScreenState extends State<LoginScreen> {
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
-  final _homeserverController = TextEditingController(text: 'https://matrix.org');
+  final _homeserverController = TextEditingController(
+    text: 'https://matrix.org',
+  );
 
   @override
   Widget build(BuildContext context) {
-    final authState = ref.watch(authProvider);
+    final authController = Get.find<AuthController>();
+    final theme = Theme.of(context);
+    final isDark = Get.isDarkMode;
+    final backgroundColor = isDark
+        ? AppTheme.darkBackground
+        : const Color(0xFFF7F8FC);
+    final cardColor = isDark ? AppTheme.darkSurface : Colors.white;
+    final accentPanel = isDark
+        ? const Color(0xFF233146)
+        : const Color(0xFFEAF3FF);
+    final bodyColor = theme.colorScheme.onSurface.withValues(alpha: 0.78);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Login to Matrix')),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            TextField(
-              controller: _usernameController,
-              decoration: const InputDecoration(labelText: 'Username'),
-            ),
-            TextField(
-              controller: _passwordController,
-              decoration: const InputDecoration(labelText: 'Password'),
-              obscureText: true,
-            ),
-            TextField(
-              controller: _homeserverController,
-              decoration: const InputDecoration(labelText: 'Homeserver'),
-            ),
-            const SizedBox(height: 20),
-            authState.maybeWhen(
-              loading: () => const CircularProgressIndicator(),
-              orElse: () => ElevatedButton(
-                onPressed: _login,
-                child: const Text('Login'),
+      backgroundColor: backgroundColor,
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 460),
+              child: Container(
+                padding: const EdgeInsets.all(24),
+                decoration: BoxDecoration(
+                  color: cardColor,
+                  borderRadius: BorderRadius.circular(28),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(
+                        alpha: isDark ? 0.18 : 0.06,
+                      ),
+                      blurRadius: 24,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: 54,
+                      height: 54,
+                      decoration: BoxDecoration(
+                        color: accentPanel,
+                        borderRadius: BorderRadius.circular(18),
+                      ),
+                      child: const Icon(
+                        Icons.forum_outlined,
+                        color: AppTheme.primaryBlue,
+                        size: 28,
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    const Text(
+                      'Connect to Matrix',
+                      style: TextStyle(
+                        fontSize: 28,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: -0.8,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Sign in with your homeserver, or jump into demo mode to review the latest UI changes.',
+                      style: TextStyle(
+                        fontSize: 15,
+                        height: 1.4,
+                        color: bodyColor,
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    TextField(
+                      controller: _usernameController,
+                      decoration: const InputDecoration(labelText: 'Username'),
+                    ),
+                    const SizedBox(height: 14),
+                    TextField(
+                      controller: _passwordController,
+                      decoration: const InputDecoration(labelText: 'Password'),
+                      obscureText: true,
+                    ),
+                    const SizedBox(height: 14),
+                    TextField(
+                      controller: _homeserverController,
+                      decoration: const InputDecoration(
+                        labelText: 'Homeserver',
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    authController.obx(
+                      (state) => Column(
+                        children: [
+                          SizedBox(
+                            width: double.infinity,
+                            child: FilledButton(
+                              onPressed: _login,
+                              child: const Text('Login'),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          SizedBox(
+                            width: double.infinity,
+                            child: OutlinedButton(
+                              onPressed: _continueWithDemo,
+                              child: const Text('Continue in Demo Mode'),
+                            ),
+                          ),
+                        ],
+                      ),
+                      onLoading: const Center(
+                        child: Padding(
+                          padding: EdgeInsets.symmetric(vertical: 16),
+                          child: CircularProgressIndicator(),
+                        ),
+                      ),
+                      onError: (error) => Column(
+                        children: [
+                          SizedBox(
+                            width: double.infinity,
+                            child: FilledButton(
+                              onPressed: _login,
+                              child: const Text('Login'),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          SizedBox(
+                            width: double.infinity,
+                            child: OutlinedButton(
+                              onPressed: _continueWithDemo,
+                              child: const Text('Continue in Demo Mode'),
+                            ),
+                          ),
+                          const SizedBox(height: 14),
+                          Text(
+                            'Error: $error',
+                            style: const TextStyle(color: Colors.red),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
-            if (authState.hasError)
-              Text('Error: ${authState.error}', style: const TextStyle(color: Colors.red)),
-          ],
+          ),
         ),
       ),
     );
@@ -60,13 +175,17 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     final homeserver = _homeserverController.text.trim();
 
     if (username.isEmpty || password.isEmpty || homeserver.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please fill all fields')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Please fill all fields')));
       return;
     }
 
-    ref.read(authProvider.notifier).login(username, password, homeserver);
+    Get.find<AuthController>().login(username, password, homeserver);
+  }
+
+  void _continueWithDemo() {
+    Get.find<AuthController>().continueWithDemo();
   }
 
   @override
