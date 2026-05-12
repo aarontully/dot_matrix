@@ -1,0 +1,10 @@
+--- lib/controllers/auth_controller.dart
++++ lib/controllers/auth_controller.dart
+@@ -68,6 +68,7 @@
+       isDummy = false;
+       change(userId, status: RxStatus.success());
+     } catch (error) {
++      print('AUTH INIT ERROR: \$error, type: \${error.runtimeType}');
+       await _clearStoredSession();
+       _client = await _createClient();
+       change(null, status: RxStatus.error(error.toString()));

@@ -90,8 +90,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
                 padding: EdgeInsets.only(bottom: 12),
                 child: LinearProgressIndicator(),
               ),
-            if (!settings.isDemoMode &&
-                settings.encryptionEnabled &&
+            if (settings.encryptionEnabled &&
                 !settings.encryptedHistoryReady) ...[
               _buildRecoveryNudge(settings),
               const SizedBox(height: 16),
@@ -122,11 +121,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
                     value: settings.activeStatusEnabled,
                     contentPadding: EdgeInsets.zero,
                     title: const Text('Active status'),
-                    subtitle: Text(
-                      settings.isDemoMode
-                          ? 'Stored locally in demo mode'
-                          : 'Updates your Matrix presence state',
-                    ),
+                    subtitle: const Text('Updates your Matrix presence state'),
                     onChanged: (value) => _toggleActiveStatus(value),
                   ),
                   const Divider(height: 1),
@@ -255,10 +250,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
                     'Encryption',
                     settings.encryptionEnabled ? 'Enabled' : 'Unavailable',
                   ),
-                  _buildInfoRow(
-                    'Mode',
-                    settings.isDemoMode ? 'Demo mode' : 'Connected',
-                  ),
+                  _buildInfoRow('Mode', 'Connected'),
                 ],
               ),
             ),
@@ -303,9 +295,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
                   ),
                   _buildInfoRow(
                     'Status',
-                    settings.isDemoMode
-                        ? 'UI review mode with local settings'
-                        : 'Matrix profile, presence, avatar, device settings, and recovery tools are live',
+                    'Matrix profile, presence, avatar, device settings, and recovery tools are live',
                   ),
                 ],
               ),
@@ -316,9 +306,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
               child: FilledButton.tonalIcon(
                 onPressed: _signOut,
                 icon: const Icon(Icons.logout),
-                label: Text(
-                  settings.isDemoMode ? 'Exit demo mode' : 'Sign out',
-                ),
+                label: const Text('Sign out'),
               ),
             ),
             const SizedBox(height: 8),
@@ -475,8 +463,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
   }
 
   void _syncControllers(SettingsState settings) {
-    final settingsKey =
-        '${settings.userId}:${settings.deviceName}:${settings.isDemoMode}';
+    final settingsKey = '${settings.userId}:${settings.deviceName}';
     if (_seededSettingsKey == settingsKey) {
       return;
     }

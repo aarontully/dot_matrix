@@ -1,9 +1,12 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
+import '../controllers/auth_controller.dart';
 import '../controllers/settings_controller.dart';
 import '../models/room_model.dart';
 import '../theme/app_theme.dart';
+import '../utils/avatar_url_resolver.dart';
 import '../widgets/message_bubble.dart';
 import 'app_settings_screen.dart';
 
@@ -36,8 +39,15 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final displayedMessages = widget.room.messages.reversed.toList();
+    final displayedMessages = List<AppEvent>.from(widget.room.messages)
+      ..sort((a, b) => b.originServerTs.compareTo(a.originServerTs));
     final theme = Theme.of(context);
+    final client = Get.find<AuthController>().client;
+    final avatarImageUrl = resolveAvatarImageUrl(
+      widget.room.avatarUrl,
+      client,
+      size: 64,
+    );
     final isWaitingForKey = widget.room.messages.any(
       (event) => event.body == 'Waiting for room key...',
     );
@@ -55,18 +65,59 @@ class _ChatScreenState extends State<ChatScreen> {
             Stack(
               clipBehavior: Clip.none,
               children: [
-                CircleAvatar(
-                  radius: 16,
-                  backgroundColor: const Color(0xFFEAF3FF),
-                  child: Text(
-                    widget.room.displayname[0].toUpperCase(),
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: AppTheme.primaryBlue,
-                      fontWeight: FontWeight.bold,
+                if (avatarImageUrl != null)
+                  CachedNetworkImage(
+                    imageUrl: avatarImageUrl,
+                    httpHeaders: {
+                      if (client.accessToken != null)
+                        'Authorization': 'Bearer ${client.accessToken}',
+                    },
+                    imageBuilder: (context, imageProvider) => CircleAvatar(
+                      radius: 16,
+                      backgroundColor: const Color(0xFFEAF3FF),
+                      backgroundImage: imageProvider,
+                    ),
+                    placeholder: (context, url) => CircleAvatar(
+                      radius: 16,
+                      backgroundColor: const Color(0xFFEAF3FF),
+                      child: Text(
+                        widget.room.displayname[0].toUpperCase(),
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: AppTheme.primaryBlue,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    errorWidget: (context, url, error) {
+                      markAvatarSourceBroken(widget.room.avatarUrl);
+                      return CircleAvatar(
+                        radius: 16,
+                        backgroundColor: const Color(0xFFEAF3FF),
+                        child: Text(
+                          widget.room.displayname[0].toUpperCase(),
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: AppTheme.primaryBlue,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      );
+                    },
+                  )
+                else
+                  CircleAvatar(
+                    radius: 16,
+                    backgroundColor: const Color(0xFFEAF3FF),
+                    child: Text(
+                      widget.room.displayname[0].toUpperCase(),
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AppTheme.primaryBlue,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
-                ),
                 Positioned(
                   bottom: -2,
                   right: -2,

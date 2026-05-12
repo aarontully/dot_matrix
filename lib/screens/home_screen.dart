@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:intl/intl.dart';
@@ -8,6 +9,7 @@ import '../controllers/auth_controller.dart';
 import '../controllers/room_controller.dart';
 import '../controllers/settings_controller.dart';
 import '../theme/app_theme.dart';
+import '../utils/avatar_url_resolver.dart';
 import 'app_settings_screen.dart';
 import 'chat_screen.dart';
 import 'compose_screen.dart';
@@ -184,6 +186,33 @@ class _HomeScreenState extends State<HomeScreen> {
     final filteredRooms = _filterRooms(rooms);
 
     if (filteredRooms.isEmpty) {
+      final isSyncing = Get.find<AuthController>().client.prevBatch == null;
+      if (isSyncing) {
+        return Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const CircularProgressIndicator(),
+            const SizedBox(height: 24),
+            Text(
+              'Syncing with Matrix...',
+              style: TextStyle(
+                fontSize: 16,
+                color: Colors.grey[600],
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        );
+      }
+
+      if (_searchQuery.isEmpty) {
+        return _buildEmptyState(
+          icon: Icons.forum_outlined,
+          title: 'No chats yet',
+          subtitle: 'Start a new conversation to see it here.',
+        );
+      }
+
       return _buildEmptyState(
         icon: Icons.forum_outlined,
         title: 'No chats match that search',
@@ -204,10 +233,38 @@ class _HomeScreenState extends State<HomeScreen> {
     final activityItems = _filterActivityItems(_buildActivityItems(rooms));
 
     if (activityItems.isEmpty) {
+      final isSyncing = Get.find<AuthController>().client.prevBatch == null;
+      if (isSyncing) {
+        return Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const CircularProgressIndicator(),
+            const SizedBox(height: 24),
+            Text(
+              'Syncing with Matrix...',
+              style: TextStyle(
+                fontSize: 16,
+                color: Colors.grey[600],
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        );
+      }
+
+      if (_searchQuery.isEmpty) {
+        return _buildEmptyState(
+          icon: Icons.bolt_outlined,
+          title: 'Your activity feed is clear',
+          subtitle:
+              'Recent updates, replies, and room movement will land here.',
+        );
+      }
+
       return _buildEmptyState(
         icon: Icons.bolt_outlined,
-        title: 'Your activity feed is clear',
-        subtitle: 'Recent updates, replies, and room movement will land here.',
+        title: 'No activity matches that search',
+        subtitle: 'Try a different term or clear your search.',
       );
     }
 
@@ -284,7 +341,6 @@ class _HomeScreenState extends State<HomeScreen> {
           builder: (settingsController) {
             final settings = settingsController.state;
             if (settings == null ||
-                settings.isDemoMode ||
                 !settings.encryptionEnabled ||
                 settings.encryptedHistoryReady) {
               return const SizedBox.shrink();
@@ -484,6 +540,12 @@ class _HomeScreenState extends State<HomeScreen> {
     final initial = room.displayname.isEmpty
         ? '#'
         : room.displayname.characters.first.toUpperCase();
+    final client = Get.find<AuthController>().client;
+    final avatarImageUrl = resolveAvatarImageUrl(
+      room.avatarUrl,
+      client,
+      size: 112,
+    );
 
     return InkWell(
       borderRadius: BorderRadius.circular(24),
@@ -495,18 +557,59 @@ class _HomeScreenState extends State<HomeScreen> {
         padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 10),
         child: Row(
           children: [
-            CircleAvatar(
-              radius: 28,
-              backgroundColor: const Color(0xFFEAF3FF),
-              child: Text(
-                initial,
-                style: const TextStyle(
-                  fontSize: 20,
-                  color: AppTheme.primaryBlue,
-                  fontWeight: FontWeight.bold,
+            if (avatarImageUrl != null)
+              CachedNetworkImage(
+                imageUrl: avatarImageUrl,
+                httpHeaders: {
+                  if (client.accessToken != null)
+                    'Authorization': 'Bearer ${client.accessToken}',
+                },
+                imageBuilder: (context, imageProvider) => CircleAvatar(
+                  radius: 28,
+                  backgroundColor: const Color(0xFFEAF3FF),
+                  backgroundImage: imageProvider,
+                ),
+                placeholder: (context, url) => CircleAvatar(
+                  radius: 28,
+                  backgroundColor: const Color(0xFFEAF3FF),
+                  child: Text(
+                    initial,
+                    style: const TextStyle(
+                      fontSize: 20,
+                      color: AppTheme.primaryBlue,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                errorWidget: (context, url, error) {
+                  markAvatarSourceBroken(room.avatarUrl);
+                  return CircleAvatar(
+                    radius: 28,
+                    backgroundColor: const Color(0xFFEAF3FF),
+                    child: Text(
+                      initial,
+                      style: const TextStyle(
+                        fontSize: 20,
+                        color: AppTheme.primaryBlue,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  );
+                },
+              )
+            else
+              CircleAvatar(
+                radius: 28,
+                backgroundColor: const Color(0xFFEAF3FF),
+                child: Text(
+                  initial,
+                  style: const TextStyle(
+                    fontSize: 20,
+                    color: AppTheme.primaryBlue,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ),
-            ),
             const SizedBox(width: 16),
             Expanded(
               child: Column(
@@ -752,32 +855,32 @@ class _HomeScreenState extends State<HomeScreen> {
       final index = entry.key;
       final room = entry.value;
       final latestEvent = _latestEvent(room);
-      final timestamp =
-          latestEvent?.originServerTs ??
-          now.subtract(Duration(minutes: (index + 1) * 11));
+      final activityAt = _roomActivityAt(room);
       final preview = _roomPreview(room);
 
-      if (latestEvent == null) {
+      if (latestEvent == null && room.lastMessage == null) {
         return _ActivityItem(
           room: room,
           title: room.displayname,
           preview: preview,
           caption: 'Room synced and ready',
           status: 'Synced',
-          timestamp: timestamp,
+          timestamp: now.subtract(Duration(minutes: (index + 1) * 11)),
           kind: _ActivityKind.quiet,
           needsAttention: false,
         );
       }
 
-      final isIncoming = !latestEvent.isMe;
+      final isIncoming = latestEvent != null
+          ? !latestEvent.isMe
+          : room.hasUnread;
       return _ActivityItem(
         room: room,
         title: room.displayname,
-        preview: latestEvent.body,
+        preview: preview,
         caption: isIncoming ? 'New message waiting' : 'You sent an update',
         status: isIncoming ? 'Reply' : 'Sent',
-        timestamp: latestEvent.originServerTs,
+        timestamp: activityAt,
         kind: isIncoming ? _ActivityKind.incoming : _ActivityKind.outgoing,
         needsAttention: isIncoming,
       );
@@ -799,12 +902,29 @@ class _HomeScreenState extends State<HomeScreen> {
 
   DateTime _roomActivityAt(AppRoom room) {
     final latestEvent = _latestEvent(room);
-    return latestEvent?.originServerTs ?? DateTime.now();
+    final lastEventTs = room.lastEventTs;
+
+    if (lastEventTs != null && latestEvent != null) {
+      return lastEventTs.isAfter(latestEvent.originServerTs)
+          ? lastEventTs
+          : latestEvent.originServerTs;
+    }
+
+    return lastEventTs ?? latestEvent?.originServerTs ?? DateTime.now();
   }
 
   String _roomPreview(AppRoom room) {
     final latestEvent = _latestEvent(room);
-    return latestEvent?.body ?? room.lastMessage ?? 'No messages yet';
+    final lastEventTs = room.lastEventTs;
+
+    if (lastEventTs != null && latestEvent != null) {
+      if (lastEventTs.isAfter(latestEvent.originServerTs)) {
+        return room.lastMessage ?? latestEvent.body;
+      }
+      return latestEvent.body;
+    }
+
+    return room.lastMessage ?? latestEvent?.body ?? 'No messages yet';
   }
 
   String _formatTimestamp(DateTime timestamp) {
@@ -848,9 +968,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (settings == null) {
       return 'Notifications, appearance, encryption, and device safety';
     }
-    if (!settings.isDemoMode &&
-        settings.encryptionEnabled &&
-        !settings.encryptedHistoryReady) {
+    if (settings.encryptionEnabled && !settings.encryptedHistoryReady) {
       return 'Finish encrypted history recovery for this device';
     }
     return 'Notifications, appearance, encryption, and device safety';

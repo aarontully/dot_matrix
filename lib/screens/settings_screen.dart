@@ -135,10 +135,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 children: [
                   _buildInfoRow('User ID', settings.userId),
                   _buildInfoRow('Homeserver', settings.homeserver),
-                  _buildInfoRow(
-                    'Mode',
-                    settings.isDemoMode ? 'Demo mode' : 'Connected',
-                  ),
+                  _buildInfoRow('Mode', 'Connected'),
                 ],
               ),
             ),
@@ -242,9 +239,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 4),
           Text(
             settings.statusMessage.isEmpty
-                ? (settings.isDemoMode
-                      ? 'Demo profile, local settings only'
-                      : 'Customize your Matrix identity and presence')
+                ? 'Customize your Matrix identity and presence'
                 : settings.statusMessage,
             style: const TextStyle(
               fontSize: 15,
@@ -269,7 +264,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     : mutedTextColor,
               ),
               _buildStatusPill(
-                settings.isDemoMode ? 'Demo mode' : 'Profile only',
+                'Profile only',
                 subtlePanel,
                 AppTheme.primaryBlue,
               ),
@@ -382,7 +377,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   String? _resolvedAvatarUrl(SettingsState settings) {
     final avatarUrl = settings.avatarUrl;
-    if (avatarUrl == null || settings.isDemoMode) {
+    if (avatarUrl == null) {
       return null;
     }
 
@@ -393,7 +388,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   void _syncControllers(SettingsState settings) {
-    final profileKey = '${settings.userId}:${settings.isDemoMode}';
+    final profileKey = settings.userId;
     if (_seededProfileKey == profileKey) {
       return;
     }

@@ -82,7 +82,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'Sign in with your homeserver, or jump into demo mode to review the latest UI changes.',
+                      'Sign in with your homeserver to restore your Matrix chats, profile, and encryption state on this device.',
                       style: TextStyle(
                         fontSize: 15,
                         height: 1.4,
@@ -118,14 +118,6 @@ class _LoginScreenState extends State<LoginScreen> {
                               child: const Text('Login'),
                             ),
                           ),
-                          const SizedBox(height: 12),
-                          SizedBox(
-                            width: double.infinity,
-                            child: OutlinedButton(
-                              onPressed: _continueWithDemo,
-                              child: const Text('Continue in Demo Mode'),
-                            ),
-                          ),
                         ],
                       ),
                       onLoading: const Center(
@@ -141,14 +133,6 @@ class _LoginScreenState extends State<LoginScreen> {
                             child: FilledButton(
                               onPressed: _login,
                               child: const Text('Login'),
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          SizedBox(
-                            width: double.infinity,
-                            child: OutlinedButton(
-                              onPressed: _continueWithDemo,
-                              child: const Text('Continue in Demo Mode'),
                             ),
                           ),
                           const SizedBox(height: 14),
@@ -182,10 +166,6 @@ class _LoginScreenState extends State<LoginScreen> {
     }
 
     Get.find<AuthController>().login(username, password, homeserver);
-  }
-
-  void _continueWithDemo() {
-    Get.find<AuthController>().continueWithDemo();
   }
 
   @override

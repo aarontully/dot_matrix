@@ -67,7 +67,6 @@ class SettingsState {
     required this.secureBackupAvailable,
     required this.keyBackupEnabled,
     required this.encryptedHistoryReady,
-    required this.isDemoMode,
     this.avatarUrl,
     this.isSavingProfile = false,
     this.isUploadingAvatar = false,
@@ -89,7 +88,6 @@ class SettingsState {
   final bool secureBackupAvailable;
   final bool keyBackupEnabled;
   final bool encryptedHistoryReady;
-  final bool isDemoMode;
   final bool isSavingProfile;
   final bool isUploadingAvatar;
   final bool isRestoringEncryption;
@@ -124,7 +122,6 @@ class SettingsState {
     bool? secureBackupAvailable,
     bool? keyBackupEnabled,
     bool? encryptedHistoryReady,
-    bool? isDemoMode,
     bool? isSavingProfile,
     bool? isUploadingAvatar,
     bool? isRestoringEncryption,
@@ -147,7 +144,6 @@ class SettingsState {
       keyBackupEnabled: keyBackupEnabled ?? this.keyBackupEnabled,
       encryptedHistoryReady:
           encryptedHistoryReady ?? this.encryptedHistoryReady,
-      isDemoMode: isDemoMode ?? this.isDemoMode,
       isSavingProfile: isSavingProfile ?? this.isSavingProfile,
       isUploadingAvatar: isUploadingAvatar ?? this.isUploadingAvatar,
       isRestoringEncryption:

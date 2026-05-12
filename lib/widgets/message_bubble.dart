@@ -1,7 +1,11 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:get/get.dart';
 
+import '../controllers/auth_controller.dart';
 import '../models/room_model.dart';
 import '../theme/app_theme.dart';
+import '../utils/avatar_url_resolver.dart';
 
 class MessageBubble extends StatelessWidget {
   const MessageBubble({
@@ -85,9 +89,58 @@ class MessageBubble extends StatelessWidget {
   }
 
   Widget _buildAvatar() {
-    final initial = event.senderId.isEmpty
-        ? '?'
-        : event.senderId[0].toUpperCase();
+    final displayName = event.senderName?.isNotEmpty == true
+        ? event.senderName!
+        : (event.senderId.isEmpty ? '?' : event.senderId.replaceAll('@', ''));
+    final initial = displayName.isNotEmpty ? displayName[0].toUpperCase() : '?';
+    final client = Get.find<AuthController>().client;
+    final avatarImageUrl = resolveAvatarImageUrl(
+      event.senderAvatarUrl,
+      client,
+      size: 48,
+    );
+
+    if (avatarImageUrl != null) {
+      return CachedNetworkImage(
+        imageUrl: avatarImageUrl,
+        httpHeaders: {
+          if (client.accessToken != null)
+            'Authorization': 'Bearer ${client.accessToken}',
+        },
+        imageBuilder: (context, imageProvider) => CircleAvatar(
+          radius: 12,
+          backgroundColor: const Color(0xFFD8DEE8),
+          backgroundImage: imageProvider,
+        ),
+        placeholder: (context, url) => CircleAvatar(
+          radius: 12,
+          backgroundColor: const Color(0xFFD8DEE8),
+          child: Text(
+            initial,
+            style: const TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              color: Color(0xFF5D6A7C),
+            ),
+          ),
+        ),
+        errorWidget: (context, url, error) {
+          markAvatarSourceBroken(event.senderAvatarUrl);
+          return CircleAvatar(
+            radius: 12,
+            backgroundColor: const Color(0xFFD8DEE8),
+            child: Text(
+              initial,
+              style: const TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: Color(0xFF5D6A7C),
+              ),
+            ),
+          );
+        },
+      );
+    }
 
     return CircleAvatar(
       radius: 12,

@@ -3,8 +3,6 @@ import 'package:get/get.dart';
 import 'package:matrix/matrix.dart';
 import 'package:path_provider/path_provider.dart';
 
-import '../utils/avatar_url_resolver.dart';
-
 class AuthController extends GetxController with StateMixin<String?> {
   static const _storageTokenKey = 'matrix_token';
   static const _storageUserIdKey = 'matrix_user_id';
@@ -15,6 +13,7 @@ class AuthController extends GetxController with StateMixin<String?> {
 
   final FlutterSecureStorage _storage = const FlutterSecureStorage();
   Client _client = Client('Dot Matrix');
+  bool isDummy = false;
 
   Client get client => _client;
 
@@ -24,71 +23,16 @@ class AuthController extends GetxController with StateMixin<String?> {
     _init();
   }
 
-  Future<HiveCollectionsDatabase> _openMatrixDatabase() async {
-    final dir = await getApplicationSupportDirectory();
-    final db = HiveCollectionsDatabase('matrix', dir.path);
-    await db.open();
-    return db;
-  }
-
   Future<Client> _createClient() async {
-    final newClient = Client(
+    final dir = await getApplicationSupportDirectory();
+    return Client(
       'Dot Matrix',
-      databaseBuilder: (_) async => _openMatrixDatabase(),
+      databaseBuilder: (_) async {
+        final db = HiveCollectionsDatabase('matrix', dir.path);
+        await db.open();
+        return db;
+      },
     );
-
-    return newClient;
-  }
-
-  Future<void> _clearMatrixCache() async {
-    final db = await _openMatrixDatabase();
-    try {
-      await db.clear();
-    } finally {
-      await db.close();
-    }
-  }
-
-  Future<bool> _hasLocalMatrixSession() async {
-    final db = await _openMatrixDatabase();
-    try {
-      final account = await db.getClient(_client.clientName);
-      return account != null;
-    } finally {
-      await db.close();
-    }
-  }
-
-  bool _isInvalidTokenError(Object error) {
-    if (error is MatrixException) {
-      return error.error == MatrixError.M_UNKNOWN_TOKEN ||
-          error.errcode == 'M_MISSING_TOKEN';
-    }
-    final message = error.toString();
-    return message.contains('M_UNKNOWN_TOKEN') ||
-        message.contains('M_MISSING_TOKEN');
-  }
-
-  Future<bool> _validateStoredSession({
-    required Uri homeserver,
-    required String accessToken,
-    required String userId,
-    required String deviceId,
-  }) async {
-    final matrixApi = MatrixApi(
-      homeserver: homeserver,
-      accessToken: accessToken,
-    );
-    final tokenOwner = await matrixApi.getTokenOwner();
-    return tokenOwner.userId == userId &&
-        (tokenOwner.deviceId == null || tokenOwner.deviceId == deviceId);
-  }
-
-  Future<void> _resetStoredSession() async {
-    await _clearStoredSession();
-    await _clearMatrixCache();
-    clearBrokenAvatarSources();
-    _client = await _createClient();
   }
 
   Future<void> _init() async {
@@ -110,51 +54,23 @@ class AuthController extends GetxController with StateMixin<String?> {
         return;
       }
 
-      final homeserverUri = Uri.parse(homeserver);
-      final hasLocalMatrixSession = await _hasLocalMatrixSession();
-
-      try {
-        final isStoredSessionValid = await _validateStoredSession(
-          homeserver: homeserverUri,
-          accessToken: accessToken,
-          userId: userId,
-          deviceId: deviceId,
-        );
-        if (!isStoredSessionValid) {
-          await _resetStoredSession();
-          change(null, status: RxStatus.success());
-          return;
-        }
-      } catch (error) {
-        if (_isInvalidTokenError(error)) {
-          await _resetStoredSession();
-          change(null, status: RxStatus.success());
-          return;
-        }
-      }
-
       _client = await _createClient();
       await _client.init(
-        newToken: hasLocalMatrixSession ? null : accessToken,
-        newHomeserver: hasLocalMatrixSession ? null : homeserverUri,
-        newUserID: hasLocalMatrixSession ? null : userId,
-        newDeviceID: hasLocalMatrixSession ? null : deviceId,
-        newDeviceName: hasLocalMatrixSession ? null : deviceName,
+        newToken: accessToken,
+        newHomeserver: Uri.parse(homeserver),
+        newUserID: userId,
+        newDeviceID: deviceId,
+        newDeviceName: deviceName,
         waitForFirstSync: false,
         waitUntilLoadCompletedLoaded: false,
       );
-      await (_client.roomsLoading ?? Future.value());
-
+      isDummy = false;
       change(userId, status: RxStatus.success());
     } catch (error) {
-      if (_isInvalidTokenError(error)) {
-        await _resetStoredSession();
-        change(null, status: RxStatus.success());
-        return;
-      }
-
+      await _clearStoredSession();
       _client = await _createClient();
       change(null, status: RxStatus.error(error.toString()));
+      // Fallback to success with null to show login screen
       change(null, status: RxStatus.success());
     }
   }
@@ -195,11 +111,19 @@ class AuthController extends GetxController with StateMixin<String?> {
         deviceName: _defaultDeviceName,
       );
 
-      clearBrokenAvatarSources();
+      isDummy = false;
       change(loginResponse.userId, status: RxStatus.success());
     } catch (error) {
       change(null, status: RxStatus.error(error.toString()));
     }
+  }
+
+  Future<void> continueWithDemo() async {
+    change(null, status: RxStatus.loading());
+    await _clearStoredSession();
+    _client = await _createClient();
+    isDummy = true;
+    change('dummy_user', status: RxStatus.success());
   }
 
   Future<void> persistDeviceName(String deviceName) async {
@@ -209,14 +133,16 @@ class AuthController extends GetxController with StateMixin<String?> {
   Future<void> logout() async {
     change(state, status: RxStatus.loading());
     try {
-      await _client.logout();
+      if (!isDummy) {
+        await _client.logout();
+      }
     } catch (_) {
       // Best effort logout. Local cleanup still matters more here.
     }
 
     await _clearStoredSession();
-    clearBrokenAvatarSources();
     _client = await _createClient();
+    isDummy = false;
     change(null, status: RxStatus.success());
   }
 

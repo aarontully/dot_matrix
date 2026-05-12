@@ -137,26 +137,6 @@ class _ComposeScreenState extends State<ComposeScreen> {
 
     try {
       final auth = Get.find<AuthController>();
-
-      if (auth.isDummy) {
-        // In demo mode, just create a dummy room
-        await Future.delayed(const Duration(seconds: 1));
-        if (!mounted) return;
-
-        final dummyRoom = AppRoom(
-          id: 'dummy_new_${DateTime.now().millisecondsSinceEpoch}',
-          displayname: userId,
-          lastMessage: null,
-          messages: [],
-        );
-
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (_) => ChatScreen(room: dummyRoom)),
-        );
-        return;
-      }
-
       final client = auth.client;
       final roomId = await client.createRoom(
         invite: [userId],

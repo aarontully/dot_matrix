@@ -13,9 +13,6 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
   static const _appearanceKey = 'appearance';
   static const _chatSortOrderKey = 'chat_sort_order';
   static const _activeStatusKey = 'active_status_enabled';
-  static const _demoDisplayNameKey = 'demo_display_name';
-  static const _demoStatusMessageKey = 'demo_status_message';
-  static const _demoDeviceNameKey = 'demo_device_name';
 
   final ImagePicker _imagePicker = ImagePicker();
 
@@ -42,30 +39,8 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
     Get.changeThemeMode(appearance.themeMode);
     final notificationsEnabled = (box.get(_notificationsKey) as bool?) ?? true;
 
-    if (auth.isDummy || client.userID == null) {
-      change(
-        SettingsState(
-          displayName:
-              (box.get(_demoDisplayNameKey) as String?) ?? 'DotMatrix Demo',
-          statusMessage:
-              (box.get(_demoStatusMessageKey) as String?) ??
-              'Exploring the app',
-          userId: 'dummy_user',
-          homeserver: 'Demo mode',
-          deviceId: 'simulator',
-          deviceName: (box.get(_demoDeviceNameKey) as String?) ?? 'Demo Device',
-          notificationsEnabled: notificationsEnabled,
-          activeStatusEnabled: (box.get(_activeStatusKey) as bool?) ?? true,
-          appearance: appearance,
-          chatSortOrder: chatSortOrder,
-          encryptionEnabled: false,
-          secureBackupAvailable: false,
-          keyBackupEnabled: false,
-          encryptedHistoryReady: false,
-          isDemoMode: true,
-        ),
-        status: RxStatus.success(),
-      );
+    if (auth.state == null || client.userID == null) {
+      change(null, status: RxStatus.success());
       return;
     }
 
@@ -126,7 +101,6 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
           secureBackupAvailable: secureBackupAvailable,
           keyBackupEnabled: keyBackupEnabled,
           encryptedHistoryReady: encryptedHistoryReady,
-          isDemoMode: false,
         ),
         status: RxStatus.success(),
       );
@@ -175,15 +149,12 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
 
     final box = await _openBox();
     await box.put(_activeStatusKey, enabled);
-
-    if (!current.isDemoMode) {
-      final client = Get.find<AuthController>().client;
-      await client.setPresence(
-        current.userId,
-        enabled ? PresenceType.online : PresenceType.offline,
-        statusMsg: _normalizedOrNull(current.statusMessage),
-      );
-    }
+    final client = Get.find<AuthController>().client;
+    await client.setPresence(
+      current.userId,
+      enabled ? PresenceType.online : PresenceType.offline,
+      statusMsg: _normalizedOrNull(current.statusMessage),
+    );
 
     change(
       current.copyWith(activeStatusEnabled: enabled),
@@ -206,24 +177,6 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
     change(current.copyWith(isSavingProfile: true), status: RxStatus.success());
 
     try {
-      if (current.isDemoMode) {
-        final box = await _openBox();
-        await box.put(_demoDisplayNameKey, trimmedDisplayName);
-        await box.put(_demoStatusMessageKey, trimmedStatusMessage);
-        await box.put(_demoDeviceNameKey, trimmedDeviceName);
-
-        change(
-          current.copyWith(
-            displayName: trimmedDisplayName,
-            statusMessage: trimmedStatusMessage,
-            deviceName: trimmedDeviceName,
-            isSavingProfile: false,
-          ),
-          status: RxStatus.success(),
-        );
-        return;
-      }
-
       final auth = Get.find<AuthController>();
       final client = auth.client;
 
@@ -276,11 +229,6 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
   Future<void> saveDeviceName(String deviceName) async {
     final current = state;
     if (current == null) return;
-    if (current.isDemoMode) {
-      throw Exception(
-        'Connect to a Matrix account to update your device label.',
-      );
-    }
 
     final trimmedDeviceName = deviceName.trim();
     final resolvedName = _nonEmptyOrFallback(
@@ -314,9 +262,6 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
   Future<void> pickAvatar() async {
     final current = state;
     if (current == null) return;
-    if (current.isDemoMode) {
-      throw Exception('Connect to a Matrix account to sync your avatar.');
-    }
 
     final selected = await _imagePicker.pickImage(
       source: ImageSource.gallery,
@@ -357,9 +302,6 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
   Future<void> clearAvatar() async {
     final current = state;
     if (current == null) return;
-    if (current.isDemoMode) {
-      throw Exception('Connect to a Matrix account to remove your avatar.');
-    }
 
     change(
       current.copyWith(isUploadingAvatar: true),
@@ -386,11 +328,6 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
     final current = state;
     if (current == null) {
       throw Exception('Settings are not ready yet.');
-    }
-    if (current.isDemoMode) {
-      throw Exception(
-        'Connect to a Matrix account before restoring encryption keys.',
-      );
     }
 
     final trimmedSecret = keyOrPassphrase.trim();
@@ -459,9 +396,6 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
     final current = state;
     if (current == null) {
       throw Exception('Settings are not ready yet.');
-    }
-    if (current.isDemoMode) {
-      throw Exception('Connect to a Matrix account before requesting keys.');
     }
 
     final client = Get.find<AuthController>().client;

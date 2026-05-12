@@ -13,12 +13,12 @@ import 'theme/app_theme.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Hive.initFlutter();
-  
+
   // Initialize Controllers
   Get.put(AuthController());
   Get.put(SettingsController());
   Get.put(RoomController());
-  
+
   runApp(const MainApp());
 }
 
@@ -33,6 +33,7 @@ class MainApp extends StatelessWidget {
         final appearance = settingsState?.appearance ?? AppAppearance.light;
 
         return GetMaterialApp(
+          debugShowCheckedModeBanner: false,
           title: 'Dot Matrix Messenger',
           theme: AppTheme.lightTheme,
           darkTheme: AppTheme.darkTheme,

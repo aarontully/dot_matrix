@@ -27,7 +27,7 @@ class RoomController extends GetxController with StateMixin<List<AppRoom>> {
     _syncSubscription?.cancel();
     _secretStoredSubscription?.cancel();
     final auth = Get.find<AuthController>();
-    if (!auth.isDummy && auth.status.isSuccess && auth.state != null) {
+    if (auth.status.isSuccess && auth.state != null) {
       _syncSubscription = auth.client.onSync.stream.listen((_) {
         _queueLoadRooms();
       });
@@ -79,7 +79,7 @@ class RoomController extends GetxController with StateMixin<List<AppRoom>> {
 
   Future<void> requestMissingEncryptionKeys() async {
     final auth = Get.find<AuthController>();
-    if (auth.isDummy || auth.state == null || auth.status.isLoading) {
+    if (auth.state == null || auth.status.isLoading) {
       return;
     }
 
@@ -106,6 +106,32 @@ class RoomController extends GetxController with StateMixin<List<AppRoom>> {
     return timeline;
   }
 
+  String _cleanRoomName(String name) {
+    var prefix = '';
+    var content = name;
+
+    if (name.startsWith('Group with ')) {
+      prefix = 'Group with ';
+      content = name.substring('Group with '.length);
+    }
+
+    var parts = content.split(',').map((p) => p.trim()).toList();
+
+    // Remove any user whose name contains 'bot' (case-insensitive)
+    parts.removeWhere((part) => part.toLowerCase().contains('bot'));
+
+    var cleaned = parts.join(', ').trim();
+    if (prefix.isNotEmpty && cleaned.isNotEmpty) {
+      cleaned = prefix + cleaned;
+    }
+
+    if (cleaned.isEmpty || cleaned == 'Group with') {
+      return 'Empty Group';
+    }
+
+    return cleaned;
+  }
+
   Future<void> _loadRoomsInternal() async {
     _isLoadingRooms = true;
     _needsReload = false;
@@ -130,141 +156,53 @@ class RoomController extends GetxController with StateMixin<List<AppRoom>> {
     }
 
     try {
-      if (auth.isDummy) {
-        // Dummy data
-        final dummyRooms = [
-          AppRoom(
-            id: 'room1',
-            displayname: 'General Chat',
-            lastMessage: 'Hey everyone!',
-            messages: [
-              AppEvent(
-                senderId: 'user1',
-                body: 'Hello!',
-                originServerTs: DateTime.now().subtract(
-                  const Duration(minutes: 10),
-                ),
-                isMe: false,
-              ),
-              AppEvent(
-                senderId: 'dummy_user',
-                body: 'Hi there!',
-                originServerTs: DateTime.now().subtract(
-                  const Duration(minutes: 5),
-                ),
-                isMe: true,
-              ),
-              AppEvent(
-                senderId: 'user1',
-                body: 'How are you?',
-                originServerTs: DateTime.now().subtract(
-                  const Duration(minutes: 2),
-                ),
-                isMe: false,
-              ),
-            ],
-          ),
-          AppRoom(
-            id: 'room2',
-            displayname: 'Work Team',
-            lastMessage: 'Meeting at 3 PM',
-            messages: [
-              AppEvent(
-                senderId: 'user2',
-                body: 'Meeting at 3 PM',
-                originServerTs: DateTime.now().subtract(
-                  const Duration(hours: 1),
-                ),
-                isMe: false,
-              ),
-              AppEvent(
-                senderId: 'dummy_user',
-                body: 'Got it!',
-                originServerTs: DateTime.now().subtract(
-                  const Duration(minutes: 30),
-                ),
-                isMe: true,
-              ),
-            ],
-          ),
-          AppRoom(
-            id: 'room3',
-            displayname: 'John Doe',
-            lastMessage: 'See you tomorrow!',
-            messages: [
-              AppEvent(
-                senderId: 'john_doe',
-                body: 'Hey, how was your day?',
-                originServerTs: DateTime.now().subtract(
-                  const Duration(hours: 2),
-                ),
-                isMe: false,
-              ),
-              AppEvent(
-                senderId: 'dummy_user',
-                body: 'It was good, thanks! Busy with work.',
-                originServerTs: DateTime.now().subtract(
-                  const Duration(hours: 1, minutes: 45),
-                ),
-                isMe: true,
-              ),
-              AppEvent(
-                senderId: 'john_doe',
-                body: 'Same here. See you tomorrow!',
-                originServerTs: DateTime.now().subtract(
-                  const Duration(minutes: 30),
-                ),
-                isMe: false,
-              ),
-            ],
-          ),
-        ];
-        change(dummyRooms, status: RxStatus.success());
-      } else {
-        final client = auth.client;
-        await client.roomsLoading;
+      final client = auth.client;
+      await client.roomsLoading;
 
-        final roomFutures = client.rooms
-            .where((room) => room.membership == Membership.join)
-            .map((room) async {
-              final timeline = await _timelineFor(room);
-              if (client.encryptionEnabled) {
-                timeline.requestKeys(
-                  tryOnlineBackup: true,
-                  onlineKeyBackupOnly: false,
-                );
-              }
-
-              final messages = timeline.events
-                  .where(
-                    (e) =>
-                        e.type == EventTypes.Message ||
-                        e.type == EventTypes.Encrypted,
-                  )
-                  .map(
-                    (e) => AppEvent(
-                      senderId: e.senderId,
-                      body: matrixEventDisplayText(e, timeline: timeline),
-                      originServerTs: e.originServerTs,
-                      isMe: e.senderId == client.userID,
-                    ),
-                  )
-                  .toList();
-
-              return AppRoom(
-                id: room.id,
-                displayname: room.getLocalizedDisplayname(),
-                lastMessage: room.lastEvent == null
-                    ? null
-                    : matrixEventDisplayText(room.lastEvent!),
-                hasUnread: room.hasNewMessages,
-                messages: messages,
+      final roomFutures = client.rooms
+          .where((room) => room.membership == Membership.join)
+          .map((room) async {
+            final timeline = await _timelineFor(room);
+            if (client.encryptionEnabled) {
+              timeline.requestKeys(
+                tryOnlineBackup: true,
+                onlineKeyBackupOnly: false,
               );
-            });
+            }
 
-        final rooms = await Future.wait(roomFutures);
-        change(rooms, status: RxStatus.success());
-      }
+            final messages = timeline.events
+                .where(
+                  (e) =>
+                      e.type == EventTypes.Message ||
+                      e.type == EventTypes.Encrypted,
+                )
+                .map(
+                  (e) => AppEvent(
+                    senderId: e.senderId,
+                    senderName: e.senderFromMemoryOrFallback.calcDisplayname(),
+                    senderAvatarUrl: e.senderFromMemoryOrFallback.avatarUrl,
+                    body: matrixEventDisplayText(e, timeline: timeline),
+                    originServerTs: e.originServerTs,
+                    isMe: e.senderId == client.userID,
+                  ),
+                )
+                .toList();
+
+            return AppRoom(
+              id: room.id,
+              displayname: _cleanRoomName(room.getLocalizedDisplayname()),
+              lastMessage: room.lastEvent == null
+                  ? null
+                  : matrixEventDisplayText(room.lastEvent!, timeline: timeline),
+              lastEventTs: room.lastEvent?.originServerTs,
+              hasUnread: room.hasNewMessages,
+              messages: messages,
+              avatarUrl: room.avatar,
+            );
+          });
+
+      final rooms = await Future.wait(roomFutures);
+      change(rooms, status: RxStatus.success());
     } catch (error) {
       change(null, status: RxStatus.error(error.toString()));
     }
