@@ -1,7 +1,7 @@
 name: dot_matrix
-description: "A new Flutter project."
+description: "Dot Matrix - A secure, cross-platform Matrix chat client with end-to-end encryption, rich messaging, and a modern Material 3 interface."
 publish_to: 'none'
-version: 0.1.0
+version: 1.0.0+1-alpha
 
 environment:
   sdk: ^3.9.2
