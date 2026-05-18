@@ -7,7 +7,7 @@
 
 ## What is Dot Matrix?
 
-Dot Matrix is a **decentralized chat application** that connects you to the [Matrix](https://matrix.org) ecosystem. Unlike traditional messaging apps, Matrix gives you full control over your conversations — no single company owns your data, and you can host your own server or join any public homeserver.
+Dot Matrix is a **decentralised chat application** that connects you to the [Matrix](https://matrix.org) ecosystem. Unlike traditional messaging apps, Matrix gives you full control over your conversations — no single company owns your data, and you can host your own server or join any public homeserver.
 
 Built from the ground up in **Flutter**, Dot Matrix runs natively on **Android, iOS, macOS, Linux, Windows, and Web** — one codebase, every platform.
 
@@ -45,7 +45,7 @@ Built from the ground up in **Flutter**, Dot Matrix runs natively on **Android, 
 ### Themes & Personalization
 - Full **Material 3** design system support
 - Adaptive light and dark modes that follow your system preference
-- Custom color schemes and dynamic surface styling
+- Custom colour schemes and dynamic surface styling
 
 ---
 
@@ -138,7 +138,6 @@ flutter build web
 
 ## Security & Privacy
 
-- Your credentials are stored in the OS secure keychain
 - All conversations support optional end-to-end encryption
 - No telemetry or analytics are collected by the app itself
 - Data lives on your chosen homeserver, not on a proprietary backend
@@ -154,8 +153,8 @@ flutter build web
 - [x] Reply threads
 - [ ] Push notifications
 - [ ] Spaces & sub-rooms
-- [ ] Message search
-- [ ] Custom themes / accent colors
+- [x] Message search
+- [x] Custom themes / accent colors
 
 ---
 
