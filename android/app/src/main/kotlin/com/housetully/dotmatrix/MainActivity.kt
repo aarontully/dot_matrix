@@ -1,4 +1,4 @@
-package com.example.dot_matrix
+package com.housetully.dotmatrix
 
 import io.flutter.embedding.android.FlutterActivity
 
