@@ -6,6 +6,7 @@ import '../controllers/auth_controller.dart';
 import '../controllers/settings_controller.dart';
 import '../models/settings_state.dart';
 import '../theme/app_theme.dart';
+import '../utils/matrix_media_uri.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -16,7 +17,6 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   final _displayNameController = TextEditingController();
-  final _statusMessageController = TextEditingController();
   String? _seededProfileKey;
 
   @override
@@ -89,43 +89,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 padding: EdgeInsets.only(bottom: 12),
                 child: LinearProgressIndicator(),
               ),
-            _buildProfileCard(settings),
-            const SizedBox(height: 16),
-            _buildSectionCard(
-              title: 'Profile Details',
-              subtitle: 'This is what Matrix contacts will see.',
-              child: Column(
-                children: [
-                  TextField(
-                    controller: _displayNameController,
-                    textInputAction: TextInputAction.next,
-                    decoration: const InputDecoration(
-                      labelText: 'Display name',
-                      hintText: 'How you appear in chats',
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  TextField(
-                    controller: _statusMessageController,
-                    minLines: 1,
-                    maxLines: 3,
-                    decoration: const InputDecoration(
-                      labelText: 'Status note',
-                      hintText: 'Share a short note or leave this empty',
-                    ),
-                  ),
-                  const SizedBox(height: 18),
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton.icon(
-                      onPressed: settings.isSavingProfile ? null : _saveProfile,
-                      icon: const Icon(Icons.save_outlined),
-                      label: const Text('Save profile'),
-                    ),
-                  ),
-                ],
-              ),
-            ),
+            _buildMergedProfileCard(settings),
             const SizedBox(height: 16),
             _buildSectionCard(
               title: 'Account',
@@ -139,9 +103,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ],
               ),
             ),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.tonalIcon(
+                onPressed: () async {
+                  await Get.find<AuthController>().logout();
+                  if (context.mounted && Navigator.canPop(context)) {
+                    Navigator.pop(context);
+                  }
+                },
+                icon: const Icon(Icons.logout),
+                label: const Text('Sign out'),
+              ),
+            ),
             const SizedBox(height: 12),
             Text(
-              'App controls like appearance, encryption recovery, notifications, and device safety live in the Menu tab.',
+              'Sessions, encryption, and your access token are under the Menu tab.',
               style: theme.textTheme.bodySmall?.copyWith(
                 color: bodyColor,
                 height: 1.4,
@@ -153,7 +131,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Widget _buildProfileCard(SettingsState settings) {
+  Widget _buildMergedProfileCard(SettingsState settings) {
     final theme = Theme.of(context);
     final isDark = Get.isDarkMode;
     final avatarUrl = _resolvedAvatarUrl(settings);
@@ -165,12 +143,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ? const Color(0xFF243042)
         : const Color(0xFFEAF3FF);
     final mutedTextColor = theme.colorScheme.onSurface.withValues(alpha: 0.72);
+    final subtitleStyle = TextStyle(
+      fontSize: 13,
+      color: theme.colorScheme.onSurface.withValues(alpha: 0.72),
+      height: 1.35,
+    );
 
     return Container(
+      width: double.infinity,
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: cardColor,
-        borderRadius: BorderRadius.circular(28),
+        borderRadius: BorderRadius.circular(24),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: isDark ? 0.18 : 0.04),
@@ -180,75 +164,77 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ],
       ),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Stack(
-            children: [
-              CircleAvatar(
-                radius: 46,
-                backgroundColor: accentPanel,
-                backgroundImage: avatarUrl != null
-                    ? NetworkImage(
-                        avatarUrl,
-                        headers: {
-                          if (Get.find<AuthController>().client.accessToken !=
-                              null)
-                            'Authorization':
-                                'Bearer ${Get.find<AuthController>().client.accessToken}',
-                        },
-                      )
-                    : null,
-                child: avatarUrl == null
-                    ? Text(
-                        settings.initials,
-                        style: const TextStyle(
-                          fontSize: 26,
-                          fontWeight: FontWeight.w700,
-                          color: AppTheme.primaryBlue,
-                        ),
-                      )
-                    : null,
-              ),
-              Positioned(
-                bottom: 0,
-                right: 0,
-                child: Material(
-                  color: cardColor,
-                  shape: const CircleBorder(),
-                  child: InkWell(
-                    customBorder: const CircleBorder(),
-                    onTap: settings.isUploadingAvatar ? null : _pickAvatar,
-                    child: const Padding(
-                      padding: EdgeInsets.all(8),
-                      child: Icon(Icons.camera_alt, size: 18),
+          Center(
+            child: Stack(
+              children: [
+                CircleAvatar(
+                  radius: 46,
+                  backgroundColor: accentPanel,
+                  backgroundImage: avatarUrl != null
+                      ? NetworkImage(
+                          avatarUrl,
+                          headers: {
+                            if (Get.find<AuthController>().client.accessToken !=
+                                null)
+                              'Authorization':
+                                  'Bearer ${Get.find<AuthController>().client.accessToken}',
+                          },
+                        )
+                      : null,
+                  child: avatarUrl == null
+                      ? Text(
+                          settings.initials,
+                          style: const TextStyle(
+                            fontSize: 26,
+                            fontWeight: FontWeight.w700,
+                            color: AppTheme.primaryBlue,
+                          ),
+                        )
+                      : null,
+                ),
+                Positioned(
+                  bottom: 0,
+                  right: 0,
+                  child: Material(
+                    color: cardColor,
+                    shape: const CircleBorder(),
+                    child: InkWell(
+                      customBorder: const CircleBorder(),
+                      onTap: settings.isUploadingAvatar ? null : _pickAvatar,
+                      child: const Padding(
+                        padding: EdgeInsets.all(8),
+                        child: Icon(Icons.camera_alt, size: 18),
+                      ),
                     ),
                   ),
                 ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Text(
-            settings.displayName,
-            style: const TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-              letterSpacing: -0.5,
+              ],
             ),
-            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 18),
+          Text(
+            'Profile Details',
+            style:
+                theme.textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ) ??
+                const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 4),
-          Text(
-            settings.statusMessage.isEmpty
-                ? 'Customize your Matrix identity and presence'
-                : settings.statusMessage,
-            style: const TextStyle(
-              fontSize: 15,
-              color: AppTheme.primaryBlue,
-              fontWeight: FontWeight.w500,
+          Text('This is what Matrix contacts will see.', style: subtitleStyle),
+          const SizedBox(height: 18),
+          TextField(
+            controller: _displayNameController,
+            textInputAction: TextInputAction.done,
+            onSubmitted: (_) => _saveProfile(),
+            decoration: const InputDecoration(
+              labelText: 'Display name',
+              hintText: 'How you appear in chats',
             ),
-            textAlign: TextAlign.center,
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 16),
           Wrap(
             alignment: WrapAlignment.center,
             spacing: 10,
@@ -272,11 +258,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           if (avatarUrl != null) ...[
             const SizedBox(height: 14),
-            TextButton(
-              onPressed: settings.isUploadingAvatar ? null : _clearAvatar,
-              child: const Text('Remove avatar'),
+            Align(
+              alignment: Alignment.center,
+              child: TextButton(
+                onPressed: settings.isUploadingAvatar ? null : _clearAvatar,
+                child: const Text('Remove avatar'),
+              ),
             ),
           ],
+          const SizedBox(height: 18),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: settings.isSavingProfile ? null : _saveProfile,
+              icon: const Icon(Icons.save_outlined),
+              label: const Text('Save profile'),
+            ),
+          ),
         ],
       ),
     );
@@ -382,7 +380,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
 
     final client = Get.find<AuthController>().client;
-    final resolved = avatarUrl.getThumbnail(client, width: 240, height: 240);
+    final resolved = withMatrixMediaAllowRedirect(
+      mxcToClientV1MediaThumbnail(
+        avatarUrl,
+        client,
+        width: 240,
+        height: 240,
+        method: ThumbnailMethod.crop,
+      ),
+    );
     final value = resolved.toString();
     return value.isEmpty ? null : value;
   }
@@ -394,7 +400,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
 
     _displayNameController.text = settings.displayName;
-    _statusMessageController.text = settings.statusMessage;
     _seededProfileKey = profileKey;
   }
 
@@ -405,13 +410,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
       await Get.find<SettingsController>().saveProfile(
         displayName: _displayNameController.text,
-        statusMessage: _statusMessageController.text,
+        statusMessage: current.statusMessage,
         deviceName: current.deviceName,
       );
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Profile saved')));
+      Get.snackbar('', 'Profile saved', snackPosition: SnackPosition.BOTTOM, duration: const Duration(seconds: 1));
     } catch (error) {
       if (!mounted) return;
       _showError(error);
@@ -422,9 +425,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     try {
       await Get.find<SettingsController>().pickAvatar();
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Avatar updated')));
+      Get.snackbar('', 'Avatar updated', snackPosition: SnackPosition.BOTTOM, duration: const Duration(seconds: 1));
     } catch (error) {
       if (!mounted) return;
       _showError(error);
@@ -435,9 +436,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     try {
       await Get.find<SettingsController>().clearAvatar();
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Avatar removed')));
+      Get.snackbar('', 'Avatar removed', snackPosition: SnackPosition.BOTTOM, duration: const Duration(seconds: 1));
     } catch (error) {
       if (!mounted) return;
       _showError(error);
@@ -445,15 +444,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   void _showError(Object error) {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(error.toString())));
+    Get.snackbar('Error', error.toString());
   }
 
   @override
   void dispose() {
     _displayNameController.dispose();
-    _statusMessageController.dispose();
     super.dispose();
   }
 }

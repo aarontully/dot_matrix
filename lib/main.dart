@@ -32,11 +32,13 @@ class MainApp extends StatelessWidget {
         final settingsState = settingsController.state;
         final appearance = settingsState?.appearance ?? AppAppearance.light;
 
+        final seed = settingsState?.customPrimaryColor;
+
         return GetMaterialApp(
           debugShowCheckedModeBanner: false,
           title: 'Dot Matrix Messenger',
-          theme: AppTheme.lightTheme,
-          darkTheme: AppTheme.darkTheme,
+          theme: AppTheme.lightTheme(seedColor: seed),
+          darkTheme: AppTheme.darkTheme(seedColor: seed),
           themeMode: appearance.themeMode,
           home: Get.find<AuthController>().obx(
             (userId) => userId != null ? const HomeScreen() : const LoginScreen(),

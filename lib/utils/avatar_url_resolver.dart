@@ -1,5 +1,7 @@
 import 'package:matrix/matrix.dart';
 
+import 'matrix_media_uri.dart';
+
 final Set<String> _brokenAvatarSources = <String>{};
 
 String? resolveAvatarImageUrl(
@@ -17,12 +19,13 @@ String? resolveAvatarImageUrl(
   }
 
   final resolvedUri = avatarUri.isScheme('mxc')
-      ? avatarUri.getThumbnail(
+      ? withMatrixMediaAllowRedirect(mxcToClientV1MediaThumbnail(
+          avatarUri,
           client,
           width: size,
           height: size,
           method: ThumbnailMethod.crop,
-        )
+        ))
       : avatarUri;
   final resolvedValue = resolvedUri.toString();
   return resolvedValue.isEmpty ? null : resolvedValue;

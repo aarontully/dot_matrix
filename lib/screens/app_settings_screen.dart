@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
-import '../controllers/auth_controller.dart';
 import '../controllers/settings_controller.dart';
 import '../models/settings_state.dart';
 import '../theme/app_theme.dart';
@@ -14,9 +13,6 @@ class AppSettingsScreen extends StatefulWidget {
 }
 
 class _AppSettingsScreenState extends State<AppSettingsScreen> {
-  final _deviceNameController = TextEditingController();
-  final _encryptionRecoveryController = TextEditingController();
-  String? _seededSettingsKey;
 
   @override
   Widget build(BuildContext context) {
@@ -44,7 +40,6 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
       body: settingsController.obx(
         (settings) {
           if (settings == null) return const SizedBox.shrink();
-          _syncControllers(settings);
           return _buildContent(context, settings);
         },
         onLoading: const Center(child: CircularProgressIndicator()),
@@ -83,21 +78,14 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (settings.isSavingProfile ||
-                settings.isUploadingAvatar ||
-                settings.isRestoringEncryption)
+            if (settings.isSavingProfile || settings.isUploadingAvatar)
               const Padding(
                 padding: EdgeInsets.only(bottom: 12),
                 child: LinearProgressIndicator(),
               ),
-            if (settings.encryptionEnabled &&
-                !settings.encryptedHistoryReady) ...[
-              _buildRecoveryNudge(settings),
-              const SizedBox(height: 16),
-            ],
             _buildSectionCard(
               title: 'Preferences',
-              subtitle: 'Appearance, alerts, and presence for this app.',
+              subtitle: 'Appearance and presence for this app.',
               child: Column(
                 children: [
                   DropdownButtonFormField<AppAppearance>(
@@ -124,133 +112,18 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
                     subtitle: const Text('Updates your Matrix presence state'),
                     onChanged: (value) => _toggleActiveStatus(value),
                   ),
-                  const Divider(height: 1),
-                  SwitchListTile.adaptive(
-                    value: settings.notificationsEnabled,
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text('Notifications'),
-                    subtitle: const Text(
-                      'Saved locally while notification wiring is still lightweight',
-                    ),
-                    onChanged: (value) {
-                      Get.find<SettingsController>().setNotificationsEnabled(
-                        value,
-                      );
-                    },
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-            _buildSectionCard(
-              title: 'Encrypted History',
-              subtitle:
-                  'Restore room keys from Secure Backup, or ask verified devices to share them.',
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildInfoRow(
-                    'Secure backup',
-                    settings.secureBackupAvailable
-                        ? 'Available'
-                        : 'Not configured',
-                  ),
-                  _buildInfoRow(
-                    'Room-key backup',
-                    settings.keyBackupEnabled ? 'Available' : 'Not found',
-                  ),
-                  _buildInfoRow(
-                    'History access',
-                    settings.encryptedHistoryReady
-                        ? 'Ready on this device'
-                        : 'Needs recovery',
-                  ),
-                  TextField(
-                    controller: _encryptionRecoveryController,
-                    enabled: !settings.isRestoringEncryption,
-                    autocorrect: false,
-                    enableSuggestions: false,
-                    textInputAction: TextInputAction.done,
-                    decoration: const InputDecoration(
-                      labelText: 'Recovery key or passphrase',
-                      hintText:
-                          'Paste your Matrix recovery key or backup passphrase',
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton.icon(
-                      onPressed: settings.isRestoringEncryption
-                          ? null
-                          : _restoreEncryptedHistory,
-                      icon: const Icon(Icons.lock_open_outlined),
-                      label: Text(
-                        settings.isRestoringEncryption
-                            ? 'Restoring...'
-                            : 'Restore from backup',
+                  const SizedBox(height: 12),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'Accent colour',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: bodyColor,
                       ),
                     ),
                   ),
-                  const SizedBox(height: 10),
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      onPressed: settings.isRestoringEncryption
-                          ? null
-                          : _requestKeysFromVerifiedDevices,
-                      icon: const Icon(Icons.devices_outlined),
-                      label: const Text('Ask verified devices'),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    settings.secureBackupAvailable
-                        ? 'Use your recovery key or passphrase on new devices. If another trusted Matrix app is already signed in, you can ask it for keys first.'
-                        : 'This account does not currently advertise Secure Backup. Another verified Matrix app may still be able to share keys.',
-                    style: TextStyle(
-                      fontSize: 13,
-                      height: 1.4,
-                      color: theme.colorScheme.onSurface.withValues(
-                        alpha: 0.72,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-            _buildSectionCard(
-              title: 'Session Safety',
-              subtitle: 'Device details and account connection state.',
-              child: Column(
-                children: [
-                  TextField(
-                    controller: _deviceNameController,
-                    decoration: const InputDecoration(
-                      labelText: 'Device label',
-                      hintText: 'How this device appears in Matrix',
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton.tonal(
-                      onPressed: settings.isSavingProfile
-                          ? null
-                          : _saveDeviceName,
-                      child: const Text('Save device label'),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  _buildInfoRow('User ID', settings.userId),
-                  _buildInfoRow('Homeserver', settings.homeserver),
-                  _buildInfoRow('Device ID', settings.deviceId),
-                  _buildInfoRow(
-                    'Encryption',
-                    settings.encryptionEnabled ? 'Enabled' : 'Unavailable',
-                  ),
-                  _buildInfoRow('Mode', 'Connected'),
+                  const SizedBox(height: 8),
+                  _buildColorPicker(settings),
                 ],
               ),
             ),
@@ -300,18 +173,9 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
                 ],
               ),
             ),
-            const SizedBox(height: 24),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.tonalIcon(
-                onPressed: _signOut,
-                icon: const Icon(Icons.logout),
-                label: const Text('Sign out'),
-              ),
-            ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 12),
             Text(
-              'Profile editing stays separate so the menu can focus on app controls, encryption recovery, and device safety.',
+              'Sign out lives on the Profile screen (person icon in the header).',
               style: theme.textTheme.bodySmall?.copyWith(
                 color: bodyColor,
                 height: 1.4,
@@ -323,67 +187,75 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
     );
   }
 
-  Widget _buildRecoveryNudge(SettingsState settings) {
-    final theme = Theme.of(context);
+  Widget _buildColorPicker(SettingsState settings) {
+    final presets = [
+      const Color(0xFF0084FF), // Default blue
+      const Color(0xFFE91E63), // Pink
+      const Color(0xFF9C27B0), // Purple
+      const Color(0xFF4CAF50), // Green
+      const Color(0xFFFF9800), // Orange
+      const Color(0xFFF44336), // Red
+      const Color(0xFF00BCD4), // Cyan
+      const Color(0xFF795548), // Brown
+    ];
+    final current = settings.customPrimaryColor;
 
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: const Color(0xFFFFF4E8),
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: const Color(0xFFFFD7AC)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Row(
-            children: [
-              Icon(Icons.key_outlined, color: Color(0xFFC96A12)),
-              SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  'Finish encrypted history setup',
-                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-                ),
+    return Wrap(
+      spacing: 10,
+      runSpacing: 10,
+      children: [
+        ...presets.map((color) {
+          final isSelected = current == color;
+          return InkWell(
+            onTap: () =>
+                Get.find<SettingsController>().setCustomPrimaryColor(color),
+            borderRadius: BorderRadius.circular(20),
+            child: Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                color: color,
+                shape: BoxShape.circle,
+                border: isSelected
+                    ? Border.all(color: Colors.white, width: 2)
+                    : null,
+                boxShadow: isSelected
+                    ? [
+                        BoxShadow(
+                          color: color.withValues(alpha: 0.5),
+                          blurRadius: 8,
+                          spreadRadius: 2,
+                        ),
+                      ]
+                    : null,
               ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Text(
-            settings.secureBackupAvailable
-                ? 'This device can send and receive encrypted messages, but it still needs your backup keys to read older secure history smoothly.'
-                : 'This device can send and receive encrypted messages, but older secure history may still depend on another trusted device sharing keys.',
-            style: TextStyle(
-              color: theme.colorScheme.onSurface.withValues(alpha: 0.78),
-              height: 1.4,
+              child: isSelected
+                  ? const Icon(Icons.check, color: Colors.white, size: 18)
+                  : null,
             ),
+          );
+        }),
+        InkWell(
+          onTap: () =>
+              Get.find<SettingsController>().clearCustomPrimaryColor(),
+          borderRadius: BorderRadius.circular(20),
+          child: Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+              color: Colors.grey.withValues(alpha: 0.2),
+              shape: BoxShape.circle,
+              border: current == null
+                  ? Border.all(
+                      color: Theme.of(context).colorScheme.primary,
+                      width: 2,
+                    )
+                  : null,
+            ),
+            child: const Icon(Icons.replay, size: 16),
           ),
-          const SizedBox(height: 14),
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: [
-              FilledButton.icon(
-                onPressed: settings.isRestoringEncryption
-                    ? null
-                    : _requestKeysFromVerifiedDevices,
-                icon: const Icon(Icons.devices_outlined),
-                label: const Text('Ask devices again'),
-              ),
-              OutlinedButton.icon(
-                onPressed: () =>
-                    _encryptionRecoveryController.selection = TextSelection(
-                      baseOffset: 0,
-                      extentOffset: _encryptionRecoveryController.text.length,
-                    ),
-                icon: const Icon(Icons.lock_open_outlined),
-                label: const Text('Use backup below'),
-              ),
-            ],
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
@@ -462,16 +334,6 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
     );
   }
 
-  void _syncControllers(SettingsState settings) {
-    final settingsKey = '${settings.userId}:${settings.deviceName}';
-    if (_seededSettingsKey == settingsKey) {
-      return;
-    }
-
-    _deviceNameController.text = settings.deviceName;
-    _seededSettingsKey = settingsKey;
-  }
-
   Future<void> _toggleActiveStatus(bool value) async {
     try {
       await Get.find<SettingsController>().setActiveStatus(value);
@@ -481,66 +343,12 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
     }
   }
 
-  Future<void> _restoreEncryptedHistory() async {
-    try {
-      final message = await Get.find<SettingsController>()
-          .restoreEncryptedHistory(_encryptionRecoveryController.text);
-      _encryptionRecoveryController.clear();
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(message)));
-    } catch (error) {
-      if (!mounted) return;
-      _showError(error);
-    }
-  }
-
-  Future<void> _requestKeysFromVerifiedDevices() async {
-    try {
-      final message = await Get.find<SettingsController>()
-          .requestEncryptedHistoryFromVerifiedDevices();
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(message)));
-    } catch (error) {
-      if (!mounted) return;
-      _showError(error);
-    }
-  }
-
-  Future<void> _saveDeviceName() async {
-    try {
-      await Get.find<SettingsController>().saveDeviceName(
-        _deviceNameController.text,
-      );
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Device label saved')));
-    } catch (error) {
-      if (!mounted) return;
-      _showError(error);
-    }
-  }
-
-  Future<void> _signOut() async {
-    await Get.find<AuthController>().logout();
-    if (!mounted) return;
-    Navigator.pop(context);
-  }
-
   void _showError(Object error) {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(error.toString())));
+    Get.snackbar('Error', error.toString());
   }
 
   @override
   void dispose() {
-    _deviceNameController.dispose();
-    _encryptionRecoveryController.dispose();
     super.dispose();
   }
 }

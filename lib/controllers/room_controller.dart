@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:get/get.dart';
 import 'package:matrix/matrix.dart';
 import '../models/room_model.dart';
+import '../utils/bridge_detector.dart';
 import '../utils/matrix_event_display.dart';
 import 'auth_controller.dart';
 
@@ -11,6 +13,9 @@ class RoomController extends GetxController with StateMixin<List<AppRoom>> {
   final Map<String, Timeline> _timelines = {};
   bool _isLoadingRooms = false;
   bool _needsReload = false;
+
+  /// Currently selected space filter. null = show all rooms.
+  final Rx<String?> selectedSpaceId = Rx<String?>(null);
 
   @override
   void onInit() {
@@ -106,12 +111,20 @@ class RoomController extends GetxController with StateMixin<List<AppRoom>> {
     return timeline;
   }
 
+  Future<void> requestRoomHistory(String roomId) async {
+    final timeline = _timelines[roomId];
+    if (timeline == null) return;
+    try {
+      await timeline.requestHistory();
+    } catch (e) {
+      debugPrint('History request failed: $e');
+    }
+  }
+
   String _cleanRoomName(String name) {
-    var prefix = '';
     var content = name;
 
     if (name.startsWith('Group with ')) {
-      prefix = 'Group with ';
       content = name.substring('Group with '.length);
     }
 
@@ -121,15 +134,22 @@ class RoomController extends GetxController with StateMixin<List<AppRoom>> {
     parts.removeWhere((part) => part.toLowerCase().contains('bot'));
 
     var cleaned = parts.join(', ').trim();
-    if (prefix.isNotEmpty && cleaned.isNotEmpty) {
-      cleaned = prefix + cleaned;
-    }
 
-    if (cleaned.isEmpty || cleaned == 'Group with') {
+    if (cleaned.isEmpty) {
       return 'Empty Group';
     }
 
     return cleaned;
+  }
+
+  /// Badge count: prefer homeserver [Room.notificationCount], else at least 1
+  /// when there are new messages or the room is marked unread.
+  int _unreadBadgeCount(Room room) {
+    var n = room.notificationCount;
+    if (n <= 0 && (room.hasNewMessages || room.markedUnread)) {
+      n = 1;
+    }
+    return n < 0 ? 0 : n;
   }
 
   Future<void> _loadRoomsInternal() async {
@@ -159,8 +179,29 @@ class RoomController extends GetxController with StateMixin<List<AppRoom>> {
       final client = auth.client;
       await client.roomsLoading;
 
+      // Build a map of child room ID -> parent space IDs from all space rooms.
+      // This is more reliable than reading m.space.parent from each room,
+      // since the SDK's spaceParents getter filters out entries with empty via.
+      final roomToSpaceParents = <String, List<String>>{};
+      for (final spaceRoom in client.rooms) {
+        if (spaceRoom.membership != Membership.join) continue;
+        final childStates = spaceRoom.states[EventTypes.spaceChild];
+        if (childStates != null) {
+          for (final entry in childStates.entries) {
+            final childRoomId = entry.key;
+            if (childRoomId.isEmpty) continue;
+            roomToSpaceParents
+                .putIfAbsent(childRoomId, () => [])
+                .add(spaceRoom.id);
+          }
+        }
+      }
+
       final roomFutures = client.rooms
-          .where((room) => room.membership == Membership.join)
+          .where(
+            (room) =>
+                room.membership == Membership.join && !room.isSpace,
+          )
           .map((room) async {
             final timeline = await _timelineFor(room);
             if (client.encryptionEnabled) {
@@ -173,20 +214,103 @@ class RoomController extends GetxController with StateMixin<List<AppRoom>> {
             final messages = timeline.events
                 .where(
                   (e) =>
-                      e.type == EventTypes.Message ||
-                      e.type == EventTypes.Encrypted,
+                      (e.type == EventTypes.Message ||
+                          e.type == EventTypes.Encrypted) &&
+                      e.relationshipType != RelationshipTypes.edit,
                 )
                 .map(
-                  (e) => AppEvent(
-                    senderId: e.senderId,
-                    senderName: e.senderFromMemoryOrFallback.calcDisplayname(),
-                    senderAvatarUrl: e.senderFromMemoryOrFallback.avatarUrl,
-                    body: matrixEventDisplayText(e, timeline: timeline),
-                    originServerTs: e.originServerTs,
-                    isMe: e.senderId == client.userID,
-                  ),
+                  (e) {
+                    final reactionEvents = timeline
+                            .aggregatedEvents[e.eventId]?['m.annotation'] ??
+                        <Event>{};
+                    final reactionCounts = <String, int>{};
+                    final myReactionEventIds = <String, String>{};
+                    for (final r in reactionEvents) {
+                      final relatesTo =
+                          r.content['m.relates_to'] as Map<String, dynamic>?;
+                      final key = relatesTo?['key'] as String?;
+                      if (key != null && key.isNotEmpty) {
+                        reactionCounts[key] = (reactionCounts[key] ?? 0) + 1;
+                        if (r.senderId == client.userID) {
+                          myReactionEventIds[key] = r.eventId;
+                        }
+                      }
+                    }
+                    return AppEvent(
+                      senderId: e.senderId,
+                      senderName:
+                          e.senderFromMemoryOrFallback.calcDisplayname(),
+                      senderAvatarUrl:
+                          e.senderFromMemoryOrFallback.avatarUrl,
+                      body: matrixEventDisplayText(e, timeline: timeline),
+                      originServerTs: e.originServerTs,
+                      isMe: e.senderId == client.userID,
+                      rawEvent: e,
+                      reactions: reactionCounts,
+                      myReactions: myReactionEventIds,
+                      isEdited: e.hasAggregatedEvents(timeline, RelationshipTypes.edit),
+                    );
+                  },
                 )
                 .toList();
+
+            final unread = _unreadBadgeCount(room);
+
+            // Collect member count, avatars, and detect bridge platform
+            final memberAvatars = <Uri>[];
+            var memberCount = 0;
+            var bridgePlatform = BridgePlatform.unknown;
+            try {
+              final members = await room.requestParticipants();
+              memberCount = members.length;
+              final memberIds = members.map((m) => m.id).toList();
+              bridgePlatform = BridgeDetector.detectFromMembers(
+                memberIds,
+                client.userID ?? '',
+              );
+              if (room.avatar == null) {
+                for (final member in members) {
+                  if (member.id == client.userID) continue;
+                  if (member.avatarUrl != null) {
+                    memberAvatars.add(member.avatarUrl!);
+                  }
+                  if (memberAvatars.length >= 4) break;
+                }
+              }
+            } catch (e) {
+              debugPrint('Participant fetch failed: $e');
+            }
+
+            final spaceParentIds = roomToSpaceParents[room.id] ?? [];
+
+            // Find latest reaction from someone else for the activity feed
+            AppReactionActivity? latestReactionActivity;
+            for (final ev in timeline.events) {
+              if (ev.type != EventTypes.Reaction) continue;
+              if (ev.senderId == client.userID) continue;
+              final relatesTo =
+                  ev.content['m.relates_to'] as Map<String, dynamic>?;
+              final emoji = relatesTo?['key'] as String?;
+              final targetId = relatesTo?['event_id'] as String?;
+              if (emoji == null || targetId == null) continue;
+              String targetBody = 'a message';
+              final targetEvent = timeline.events
+                  .firstWhereOrNull((e) => e.eventId == targetId);
+              if (targetEvent != null) {
+                targetBody = matrixEventDisplayText(targetEvent, timeline: timeline);
+              }
+              final activity = AppReactionActivity(
+                senderId: ev.senderId,
+                senderName: ev.senderFromMemoryOrFallback.calcDisplayname(),
+                emoji: emoji,
+                targetMessageBody: targetBody,
+                timestamp: ev.originServerTs,
+              );
+              if (latestReactionActivity == null ||
+                  activity.timestamp.isAfter(latestReactionActivity.timestamp)) {
+                latestReactionActivity = activity;
+              }
+            }
 
             return AppRoom(
               id: room.id,
@@ -195,9 +319,15 @@ class RoomController extends GetxController with StateMixin<List<AppRoom>> {
                   ? null
                   : matrixEventDisplayText(room.lastEvent!, timeline: timeline),
               lastEventTs: room.lastEvent?.originServerTs,
-              hasUnread: room.hasNewMessages,
+              hasUnread: unread > 0,
+              unreadCount: unread,
               messages: messages,
               avatarUrl: room.avatar,
+              memberAvatarUrls: memberAvatars,
+              isGroup: memberCount > 2,
+              spaceParentIds: spaceParentIds,
+              latestReactionActivity: latestReactionActivity,
+              bridgePlatform: bridgePlatform,
             );
           });
 
@@ -211,5 +341,18 @@ class RoomController extends GetxController with StateMixin<List<AppRoom>> {
     if (_needsReload) {
       Future.microtask(() => _loadRoomsInternal());
     }
+  }
+
+  /// Returns the list of spaces the user is in, for the filter UI.
+  List<Map<String, String>> get spaces {
+    final auth = Get.find<AuthController>();
+    if (auth.state == null) return [];
+    return auth.client.rooms
+        .where((r) => r.membership == Membership.join && r.isSpace)
+        .map((r) => {
+              'id': r.id,
+              'name': r.getLocalizedDisplayname(),
+            })
+        .toList();
   }
 }

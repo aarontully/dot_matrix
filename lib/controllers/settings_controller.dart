@@ -1,8 +1,13 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:matrix/encryption.dart';
 import 'package:matrix/matrix.dart';
 
+import '../models/device_session_info.dart';
 import '../models/settings_state.dart';
 import 'auth_controller.dart';
 import 'room_controller.dart';
@@ -13,6 +18,7 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
   static const _appearanceKey = 'appearance';
   static const _chatSortOrderKey = 'chat_sort_order';
   static const _activeStatusKey = 'active_status_enabled';
+  static const _customPrimaryColorKey = 'custom_primary_color';
 
   final ImagePicker _imagePicker = ImagePicker();
 
@@ -36,6 +42,9 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
     final chatSortOrder = ChatSortOrderX.fromStorage(
       box.get(_chatSortOrderKey) as String?,
     );
+    final customColorValue = box.get(_customPrimaryColorKey) as int?;
+    final customPrimaryColor =
+        customColorValue != null ? Color(customColorValue) : null;
     Get.changeThemeMode(appearance.themeMode);
     final notificationsEnabled = (box.get(_notificationsKey) as bool?) ?? true;
 
@@ -101,6 +110,7 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
           secureBackupAvailable: secureBackupAvailable,
           keyBackupEnabled: keyBackupEnabled,
           encryptedHistoryReady: encryptedHistoryReady,
+          customPrimaryColor: customPrimaryColor,
         ),
         status: RxStatus.success(),
       );
@@ -129,6 +139,30 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
     final box = await _openBox();
     await box.put(_chatSortOrderKey, order.name);
     change(current.copyWith(chatSortOrder: order), status: RxStatus.success());
+  }
+
+  Future<void> setCustomPrimaryColor(Color color) async {
+    final current = state;
+    if (current == null) return;
+
+    final box = await _openBox();
+    await box.put(_customPrimaryColorKey, color.toARGB32());
+    change(
+      current.copyWith(customPrimaryColor: color),
+      status: RxStatus.success(),
+    );
+  }
+
+  Future<void> clearCustomPrimaryColor() async {
+    final current = state;
+    if (current == null) return;
+
+    final box = await _openBox();
+    await box.delete(_customPrimaryColorKey);
+    change(
+      current.copyWith(clearCustomPrimaryColor: true),
+      status: RxStatus.success(),
+    );
   }
 
   Future<void> setNotificationsEnabled(bool enabled) async {
@@ -390,6 +424,168 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
       );
       rethrow;
     }
+  }
+
+  Future<List<DeviceSessionInfo>> fetchDeviceSessions() async {
+    final auth = Get.find<AuthController>();
+    final client = auth.client;
+    final userId = client.userID;
+    if (userId == null) {
+      return const [];
+    }
+
+    await client.updateUserDeviceKeys(additionalUsers: {userId});
+    await client.userDeviceKeysLoading;
+
+    final devices = await client.getDevices() ?? [];
+    final ownKeys = client.userDeviceKeys[userId];
+    final currentId = client.deviceID;
+
+    final list = devices.map((d) {
+      final dk = ownKeys?.deviceKeys[d.deviceId];
+      final DeviceVerificationLabel v;
+      if (dk == null) {
+        v = DeviceVerificationLabel.unknown;
+      } else if (dk.blocked) {
+        v = DeviceVerificationLabel.blocked;
+      } else if (dk.verified) {
+        v = DeviceVerificationLabel.verified;
+      } else {
+        v = DeviceVerificationLabel.unverified;
+      }
+      return DeviceSessionInfo(
+        deviceId: d.deviceId,
+        displayName: d.displayName,
+        lastSeenTs: d.lastSeenTs,
+        isCurrentDevice: d.deviceId == currentId,
+        verification: v,
+      );
+    }).toList();
+
+    list.sort((a, b) {
+      if (a.isCurrentDevice != b.isCurrentDevice) {
+        return a.isCurrentDevice ? -1 : 1;
+      }
+      final ta = a.lastSeenTs ?? 0;
+      final tb = b.lastSeenTs ?? 0;
+      return tb.compareTo(ta);
+    });
+
+    return list;
+  }
+
+  /// Rotates the Matrix Secure Backup (4s key) passphrase using the Matrix SDK
+  /// bootstrap flow. Requires an existing backup on the account.
+  Future<String> changeRecoveryPassphrase({
+    required String currentSecret,
+    required String newPassphrase,
+  }) async {
+    final trimmedNew = newPassphrase.trim();
+    if (trimmedNew.length < 8) {
+      throw Exception('Choose a new passphrase with at least 8 characters.');
+    }
+
+    final client = Get.find<AuthController>().client;
+    final encryption = client.encryption;
+    if (encryption == null || !client.encryptionEnabled) {
+      throw Exception(
+        'Encryption is not available on this device. Rebuild the app and sign in again.',
+      );
+    }
+
+    await client.accountDataLoading;
+    if (encryption.ssss.defaultKeyId == null) {
+      throw Exception(
+        'This account has no Secure Backup key yet. Set up encryption in another Matrix client, then try again.',
+      );
+    }
+
+    final completer = Completer<String>();
+
+    void fail(Object e) {
+      if (!completer.isCompleted) {
+        completer.completeError(e);
+      }
+    }
+
+    encryption.bootstrap(
+      onUpdate: (bootstrap) {
+        Future<void> step() async {
+          try {
+            switch (bootstrap.state) {
+              case BootstrapState.askWipeSsss:
+                bootstrap.wipeSsss(false);
+                return;
+              case BootstrapState.askUseExistingSsss:
+                bootstrap.useExistingSsss(false);
+                return;
+              case BootstrapState.askBadSsss:
+                bootstrap.ignoreBadSecrets(true);
+                return;
+              case BootstrapState.askUnlockSsss:
+                final keys = bootstrap.oldSsssKeys;
+                if (keys == null || keys.isEmpty) {
+                  throw Exception('Could not read existing backup keys.');
+                }
+                for (final open in keys.values) {
+                  await open.unlock(keyOrPassphrase: currentSecret.trim());
+                }
+                bootstrap.unlockedSsss();
+                return;
+              case BootstrapState.askNewSsss:
+                if (bootstrap.oldSsssKeys == null &&
+                    encryption.ssss.defaultKeyId != null) {
+                  throw Exception(
+                    'Cannot change the recovery key from this state. Open App settings and finish encrypted history setup first.',
+                  );
+                }
+                await bootstrap.newSsss(trimmedNew);
+                return;
+              case BootstrapState.askWipeCrossSigning:
+                await bootstrap.wipeCrossSigning(false);
+                return;
+              case BootstrapState.askSetupCrossSigning:
+                await bootstrap.askSetupCrossSigning();
+                return;
+              case BootstrapState.askWipeOnlineKeyBackup:
+                bootstrap.wipeOnlineKeyBackup(false);
+                return;
+              case BootstrapState.askSetupOnlineKeyBackup:
+                await bootstrap.askSetupOnlineKeyBackup(false);
+                return;
+              case BootstrapState.done:
+                await refreshSettings();
+                if (!completer.isCompleted) {
+                  completer.complete('Recovery passphrase updated.');
+                }
+                return;
+              case BootstrapState.error:
+                if (!completer.isCompleted) {
+                  completer.completeError(
+                    Exception(
+                      'Recovery key change failed. Check your current recovery key or passphrase.',
+                    ),
+                  );
+                }
+                return;
+              default:
+                return;
+            }
+          } catch (e) {
+            fail(e is Exception ? e : Exception(e.toString()));
+          }
+        }
+
+        unawaited(step());
+      },
+    );
+
+    return completer.future.timeout(
+      const Duration(minutes: 2),
+      onTimeout: () => throw TimeoutException(
+        'Recovery key change timed out. Check your network and try again.',
+      ),
+    );
   }
 
   Future<String> requestEncryptedHistoryFromVerifiedDevices() async {

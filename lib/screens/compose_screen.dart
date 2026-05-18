@@ -125,9 +125,7 @@ class _ComposeScreenState extends State<ComposeScreen> {
   Future<void> _startChat() async {
     final userId = _userIdController.text.trim();
     if (userId.isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Please enter a User ID')));
+      Get.snackbar('Error', 'Please enter a User ID');
       return;
     }
 
@@ -138,6 +136,30 @@ class _ComposeScreenState extends State<ComposeScreen> {
     try {
       final auth = Get.find<AuthController>();
       final client = auth.client;
+
+      // Check if an existing direct chat with this user already exists
+      final existingRoomId = client.getDirectChatFromUserId(userId);
+      if (existingRoomId != null) {
+        final room = client.getRoomById(existingRoomId);
+        if (room != null && room.membership == Membership.join) {
+          if (!mounted) return;
+          final appRoom = AppRoom(
+            id: room.id,
+            displayname: room.getLocalizedDisplayname(),
+            lastMessage: room.lastEvent == null
+                ? null
+                : matrixEventDisplayText(room.lastEvent!),
+            messages: [],
+          );
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (_) => ChatScreen(room: appRoom)),
+          );
+          return;
+        }
+      }
+
+      // No existing chat found; create a new one
       final roomId = await client.createRoom(
         invite: [userId],
         isDirect: true,
@@ -164,18 +186,12 @@ class _ComposeScreenState extends State<ComposeScreen> {
           MaterialPageRoute(builder: (_) => ChatScreen(room: appRoom)),
         );
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Room created, but could not be loaded immediately.'),
-          ),
-        );
+        Get.snackbar('', 'Room created, but could not be loaded immediately.');
         Navigator.pop(context);
       }
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Error: ${error.toString()}')));
+      Get.snackbar('Error', error.toString());
     } finally {
       if (mounted) {
         setState(() {

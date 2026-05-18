@@ -8,12 +8,13 @@ class AppTheme {
   static const Color darkBackground = Color(0xFF111318);
   static const Color darkSurface = Color(0xFF1A1E25);
 
-  static ThemeData get lightTheme {
+  static ThemeData lightTheme({Color? seedColor}) {
+    final seed = seedColor ?? primaryBlue;
     return ThemeData(
       useMaterial3: true,
       colorScheme: ColorScheme.fromSeed(
-        seedColor: primaryBlue,
-        primary: primaryBlue,
+        seedColor: seed,
+        primary: seed,
         surface: scaffoldBackground,
       ),
       scaffoldBackgroundColor: scaffoldBackground,
@@ -31,9 +32,9 @@ class AppTheme {
           letterSpacing: -0.5,
         ),
       ),
-      bottomNavigationBarTheme: const BottomNavigationBarThemeData(
+      bottomNavigationBarTheme: BottomNavigationBarThemeData(
         backgroundColor: scaffoldBackground,
-        selectedItemColor: primaryBlue,
+        selectedItemColor: seed,
         unselectedItemColor: Colors.black54,
         type: BottomNavigationBarType.fixed,
         elevation: 8,
@@ -55,7 +56,7 @@ class AppTheme {
         ),
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       ),
-      iconTheme: const IconThemeData(color: primaryBlue),
+      iconTheme: IconThemeData(color: seed),
       dividerTheme: DividerThemeData(
         color: Colors.grey.withValues(alpha: 0.2),
         thickness: 1,
@@ -64,14 +65,18 @@ class AppTheme {
     );
   }
 
-  static ThemeData get darkTheme {
+  static ThemeData darkTheme({Color? seedColor}) {
+    final seed = seedColor ?? primaryBlue;
+    final darkPrimary = seed == primaryBlue
+        ? const Color(0xFF5AA7FF)
+        : HSLColor.fromColor(seed).withLightness(0.65).toColor();
     return ThemeData(
       useMaterial3: true,
       brightness: Brightness.dark,
       colorScheme: ColorScheme.fromSeed(
-        seedColor: primaryBlue,
+        seedColor: seed,
         brightness: Brightness.dark,
-        primary: const Color(0xFF5AA7FF),
+        primary: darkPrimary,
         surface: darkSurface,
       ),
       scaffoldBackgroundColor: darkBackground,
@@ -89,10 +94,10 @@ class AppTheme {
           letterSpacing: -0.5,
         ),
       ),
-      bottomNavigationBarTheme: const BottomNavigationBarThemeData(
+      bottomNavigationBarTheme: BottomNavigationBarThemeData(
         backgroundColor: darkBackground,
-        selectedItemColor: Color(0xFF5AA7FF),
-        unselectedItemColor: Color(0xFF96A0AE),
+        selectedItemColor: darkPrimary,
+        unselectedItemColor: const Color(0xFF96A0AE),
         type: BottomNavigationBarType.fixed,
         elevation: 8,
       ),
@@ -113,7 +118,7 @@ class AppTheme {
         ),
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       ),
-      iconTheme: const IconThemeData(color: Color(0xFF5AA7FF)),
+      iconTheme: IconThemeData(color: darkPrimary),
       dividerTheme: const DividerThemeData(
         color: Color(0xFF262E3A),
         thickness: 1,

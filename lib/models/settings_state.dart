@@ -71,6 +71,7 @@ class SettingsState {
     this.isSavingProfile = false,
     this.isUploadingAvatar = false,
     this.isRestoringEncryption = false,
+    this.customPrimaryColor,
   });
 
   final String displayName;
@@ -91,6 +92,7 @@ class SettingsState {
   final bool isSavingProfile;
   final bool isUploadingAvatar;
   final bool isRestoringEncryption;
+  final Color? customPrimaryColor;
 
   String get initials {
     final source = displayName.trim().isNotEmpty ? displayName.trim() : userId;
@@ -125,6 +127,8 @@ class SettingsState {
     bool? isSavingProfile,
     bool? isUploadingAvatar,
     bool? isRestoringEncryption,
+    Color? customPrimaryColor,
+    bool clearCustomPrimaryColor = false,
   }) {
     return SettingsState(
       displayName: displayName ?? this.displayName,
@@ -148,6 +152,9 @@ class SettingsState {
       isUploadingAvatar: isUploadingAvatar ?? this.isUploadingAvatar,
       isRestoringEncryption:
           isRestoringEncryption ?? this.isRestoringEncryption,
+      customPrimaryColor: clearCustomPrimaryColor
+          ? null
+          : customPrimaryColor ?? this.customPrimaryColor,
     );
   }
 }

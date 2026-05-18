@@ -159,9 +159,7 @@ class _LoginScreenState extends State<LoginScreen> {
     final homeserver = _homeserverController.text.trim();
 
     if (username.isEmpty || password.isEmpty || homeserver.isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Please fill all fields')));
+      Get.snackbar('Error', 'Please fill all fields');
       return;
     }
 
