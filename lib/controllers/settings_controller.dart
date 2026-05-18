@@ -608,9 +608,50 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
     );
 
     try {
+      final userId = client.userID;
+      if (userId != null) {
+        await client.updateUserDeviceKeys(additionalUsers: {userId});
+      }
       await client.userDeviceKeysLoading;
+
+      final ownKeys = userId != null ? client.userDeviceKeys[userId] : null;
+      final currentDeviceId = client.deviceID;
+      final otherDevices = ownKeys?.deviceKeys.values
+              .where((dk) => dk.deviceId != currentDeviceId)
+              .toList() ??
+          [];
+      final hasOtherDevice = otherDevices.isNotEmpty;
+      final hasOtherVerifiedDevice =
+          otherDevices.any((dk) => dk.verified);
+
+      debugPrint(
+        '[KeyRequest] currentDevice=$currentDeviceId totalOthers=${otherDevices.length} verifiedOthers=${otherDevices.where((dk) => dk.verified).length}',
+      );
+      for (final dk in otherDevices) {
+        debugPrint(
+          '[KeyRequest] device=${dk.deviceId} verified=${dk.verified} blocked=${dk.blocked}',
+        );
+      }
+
+      if (!hasOtherDevice) {
+        change(
+          current.copyWith(isRestoringEncryption: false),
+          status: RxStatus.success(),
+        );
+        return 'No other devices found on this account. Sign in on another Matrix app first, or use your recovery key below.';
+      }
+
+      if (!hasOtherVerifiedDevice) {
+        change(
+          current.copyWith(isRestoringEncryption: false),
+          status: RxStatus.success(),
+        );
+        return 'Other devices exist but none are verified. Verify one of them (e.g., in Element Desktop settings > Sessions) then try again, or use your recovery key below.';
+      }
+
       await encryption.ssss.maybeRequestAll();
       await Get.find<RoomController>().requestMissingEncryptionKeys();
+      debugPrint('[KeyRequest] Sent requests via ssss.maybeRequestAll and roomController.requestMissingEncryptionKeys');
       await refreshSettings();
       final refreshed = state;
       if (refreshed != null) {
@@ -627,6 +668,55 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
       );
       rethrow;
     }
+  }
+
+  Future<KeyVerification> startDeviceVerification() async {
+    final client = Get.find<AuthController>().client;
+    final encryption = client.encryption;
+    if (encryption == null) {
+      throw Exception('Encryption is not available.');
+    }
+    final userId = client.userID;
+    if (userId == null) {
+      throw Exception('Not signed in.');
+    }
+
+    await client.updateUserDeviceKeys(additionalUsers: {userId});
+    await client.userDeviceKeysLoading;
+
+    final ownKeys = client.userDeviceKeys[userId];
+    final otherKeys = ownKeys?.deviceKeys.values
+            .where((dk) => dk.deviceId != client.deviceID)
+            .toList() ??
+        [];
+
+    if (otherKeys.isEmpty) {
+      throw Exception('No other devices found on this account.');
+    }
+
+    final serverDevices = await client.getDevices() ?? [];
+    final currentId = client.deviceID;
+    final candidates = serverDevices
+        .where((d) => d.deviceId != currentId)
+        .toList();
+    candidates.sort((a, b) {
+      final ta = a.lastSeenTs ?? 0;
+      final tb = b.lastSeenTs ?? 0;
+      return tb.compareTo(ta);
+    });
+
+    final targetDeviceId = candidates.isNotEmpty
+        ? candidates.first.deviceId
+        : otherKeys.first.deviceId;
+
+    final request = KeyVerification(
+      encryption: encryption,
+      userId: userId,
+      deviceId: targetDeviceId,
+    );
+    await request.start();
+    encryption.keyVerificationManager.addRequest(request);
+    return request;
   }
 
   Future<Box<dynamic>> _openBox() async {

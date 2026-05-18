@@ -1,5 +1,6 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:dot_matrix/widgets/dot_matrix_loader.dart';
 import 'package:get/get.dart';
 import 'package:intl/intl.dart';
@@ -607,23 +608,10 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                       ),
                       const SizedBox(height: 14),
-                      Wrap(
-                        spacing: 10,
-                        runSpacing: 10,
-                        children: [
-                          FilledButton.icon(
-                            onPressed: settings.isRestoringEncryption
-                                ? null
-                                : () => _askDevicesAgain(context),
-                            icon: const Icon(Icons.devices_outlined),
-                            label: const Text('Ask devices again'),
-                          ),
-                          OutlinedButton.icon(
-                            onPressed: () => _openEncryptionSettings(context),
-                            icon: const Icon(Icons.lock_outline),
-                            label: const Text('Open recovery tools'),
-                          ),
-                        ],
+                      FilledButton.icon(
+                        onPressed: () => _openEncryptionSettings(context),
+                        icon: const Icon(Icons.lock_outline),
+                        label: const Text('Open recovery tools'),
                       ),
                     ],
                   ),
@@ -770,10 +758,13 @@ class _HomeScreenState extends State<HomeScreen> {
         : room.displayname.characters.first.toUpperCase();
     return InkWell(
       borderRadius: BorderRadius.circular(24),
-      onTap: () => Navigator.push(
-        context,
-        MaterialPageRoute(builder: (_) => ChatScreen(room: room)),
-      ),
+      onTap: () {
+        HapticFeedback.selectionClick();
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => ChatScreen(room: room)),
+        );
+      },
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 10),
         child: Row(
@@ -892,10 +883,13 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       child: InkWell(
         borderRadius: BorderRadius.circular(24),
-        onTap: () => Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => ChatScreen(room: item.room)),
-        ),
+        onTap: () {
+          HapticFeedback.selectionClick();
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => ChatScreen(room: item.room)),
+          );
+        },
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Row(
@@ -1292,18 +1286,6 @@ class _HomeScreenState extends State<HomeScreen> {
       return 'Appearance, presence, and chat ordering';
     }
     return 'Appearance, presence, and chat ordering';
-  }
-
-  Future<void> _askDevicesAgain(BuildContext context) async {
-    try {
-      final message = await Get.find<SettingsController>()
-          .requestEncryptedHistoryFromVerifiedDevices();
-      if (!context.mounted) return;
-      Get.snackbar('', message, snackPosition: SnackPosition.BOTTOM, duration: const Duration(seconds: 2));
-    } catch (error) {
-      if (!context.mounted) return;
-      Get.snackbar('Error', error.toString());
-    }
   }
 
   void _openProfile(BuildContext context) {

@@ -16,14 +16,13 @@ import 'package:just_audio/just_audio.dart' as ja;
 
 import '../controllers/auth_controller.dart';
 import '../controllers/room_controller.dart';
-import '../controllers/settings_controller.dart';
 import '../models/room_model.dart';
 import '../utils/permissions.dart';
 import '../utils/bridge_detector.dart';
 import '../widgets/bridge_icon.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/room_avatar_grid.dart';
-import 'app_settings_screen.dart';
+import 'encryption_settings_screen.dart';
 
 class ChatScreen extends StatefulWidget {
   final AppRoom room;
@@ -247,6 +246,20 @@ class _ChatScreenState extends State<ChatScreen> {
                   (event) => event.body == 'Waiting for room key...',
                 );
 
+                final auth = Get.find<AuthController>();
+                final ownUserId = auth.client.userID;
+                String? lastReadOutgoingEventId;
+                for (final event in displayedMessages) {
+                  if (event.isMe) {
+                    final hasOtherReaders = event.rawEvent.receipts
+                        .any((r) => r.user.id != ownUserId);
+                    if (hasOtherReaders) {
+                      lastReadOutgoingEventId = event.rawEvent.eventId;
+                      break;
+                    }
+                  }
+                }
+
                 return Expanded(
                   child: Column(
                     children: [
@@ -333,6 +346,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                         ? DismissDirection.endToStart
                                         : DismissDirection.startToEnd,
                                     confirmDismiss: (_) async {
+                                      HapticFeedback.mediumImpact();
                                       _handleMessageAction(MessageAction.reply, event);
                                       return false;
                                     },
@@ -352,6 +366,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                       isMetaAi: false,
                                       isFirstInGroup: isFirstInGroup,
                                       isLastInGroup: isLastInGroup,
+                                      showReadReceipts: event.rawEvent.eventId == lastReadOutgoingEventId,
                                       replyToEvent: replyTarget,
                                       onReplyTap: replyTarget != null
                                           ? (id) => _scrollToEvent(id, displayedMessages)
@@ -431,21 +446,10 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ),
           const SizedBox(height: 14),
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: [
-              FilledButton.icon(
-                onPressed: _askDevicesAgain,
-                icon: const Icon(Icons.devices_outlined),
-                label: const Text('Ask devices again'),
-              ),
-              OutlinedButton.icon(
-                onPressed: _openRecoveryTools,
-                icon: const Icon(Icons.tune),
-                label: const Text('Open recovery tools'),
-              ),
-            ],
+          FilledButton.icon(
+            onPressed: _openRecoveryTools,
+            icon: const Icon(Icons.tune),
+            label: const Text('Open recovery tools'),
           ),
         ],
       ),
@@ -709,6 +713,7 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _sendMessage() async {
     final text = _messageController.text.trim();
     if (text.isEmpty) return;
+    HapticFeedback.lightImpact();
     _messageController.clear();
     final replyTo = _replyingToEvent;
     final editing = _editingEvent;
@@ -766,6 +771,7 @@ class _ChatScreenState extends State<ChatScreen> {
         setState(() => _replyingToEvent = event);
         break;
       case MessageAction.copy:
+        HapticFeedback.lightImpact();
         Clipboard.setData(ClipboardData(text: event.body));
         Get.snackbar('', 'Copied', snackPosition: SnackPosition.BOTTOM, duration: const Duration(seconds: 1));
         break;
@@ -1394,22 +1400,10 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  Future<void> _askDevicesAgain() async {
-    try {
-      final message = await Get.find<SettingsController>()
-          .requestEncryptedHistoryFromVerifiedDevices();
-      if (!mounted) return;
-      Get.snackbar('', message, snackPosition: SnackPosition.BOTTOM, duration: const Duration(seconds: 2));
-    } catch (error) {
-      if (!mounted) return;
-      Get.snackbar('Error', error.toString());
-    }
-  }
-
   void _openRecoveryTools() {
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => const AppSettingsScreen()),
+      MaterialPageRoute(builder: (_) => const EncryptionSettingsScreen()),
     );
   }
 

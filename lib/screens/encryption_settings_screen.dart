@@ -2,9 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:dot_matrix/widgets/dot_matrix_loader.dart';
 import 'package:get/get.dart';
 
+import '../controllers/auth_controller.dart';
+import '../controllers/room_controller.dart';
 import '../controllers/settings_controller.dart';
 import '../models/settings_state.dart';
 import '../theme/app_theme.dart';
+import '../widgets/device_verification_dialog.dart';
 
 class EncryptionSettingsScreen extends StatefulWidget {
   const EncryptionSettingsScreen({super.key});
@@ -154,9 +157,9 @@ class _EncryptionSettingsScreenState extends State<EncryptionSettingsScreen> {
                     child: OutlinedButton.icon(
                       onPressed: settings.isRestoringEncryption
                           ? null
-                          : _requestKeysFromVerifiedDevices,
-                      icon: const Icon(Icons.devices_outlined),
-                      label: const Text('Ask verified devices'),
+                          : _verifyDevice,
+                      icon: const Icon(Icons.verified_user_outlined),
+                      label: const Text('Verify Device'),
                     ),
                   ),
                   const SizedBox(height: 10),
@@ -225,9 +228,9 @@ class _EncryptionSettingsScreenState extends State<EncryptionSettingsScreen> {
               FilledButton.icon(
                 onPressed: settings.isRestoringEncryption
                     ? null
-                    : _requestKeysFromVerifiedDevices,
-                icon: const Icon(Icons.devices_outlined),
-                label: const Text('Ask devices again'),
+                    : _verifyDevice,
+                icon: const Icon(Icons.verified_user_outlined),
+                label: const Text('Verify Device'),
               ),
               OutlinedButton.icon(
                 onPressed: () =>
@@ -333,12 +336,25 @@ class _EncryptionSettingsScreenState extends State<EncryptionSettingsScreen> {
     }
   }
 
-  Future<void> _requestKeysFromVerifiedDevices() async {
+  Future<void> _verifyDevice() async {
     try {
-      final message = await Get.find<SettingsController>()
-          .requestEncryptedHistoryFromVerifiedDevices();
+      final request = await Get.find<SettingsController>()
+          .startDeviceVerification();
       if (!mounted) return;
-      Get.snackbar('', message, snackPosition: SnackPosition.BOTTOM, duration: const Duration(seconds: 2));
+      await showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => DeviceVerificationDialog(request: request),
+      );
+      if (!mounted) return;
+
+      final client = Get.find<AuthController>().client;
+      final encryption = client.encryption;
+      if (encryption != null) {
+        await encryption.ssss.maybeRequestAll();
+      }
+      await Get.find<RoomController>().requestMissingEncryptionKeys();
+      await Get.find<SettingsController>().refreshSettings();
     } catch (error) {
       if (!mounted) return;
       _showError(error);

@@ -11,6 +11,7 @@ import 'package:just_audio/just_audio.dart';
 import 'package:matrix/matrix.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:gal/gal.dart';
 import 'package:photo_view/photo_view.dart';
 
 import '../controllers/auth_controller.dart';
@@ -30,6 +31,7 @@ class MessageBubble extends StatelessWidget {
     required this.isFirstInGroup,
     required this.isLastInGroup,
     this.isMetaAi = false,
+    this.showReadReceipts = false,
     this.replyToEvent,
     this.onReplyTap,
     this.onAction,
@@ -40,6 +42,7 @@ class MessageBubble extends StatelessWidget {
   final bool isMetaAi;
   final bool isFirstInGroup;
   final bool isLastInGroup;
+  final bool showReadReceipts;
   final AppEvent? replyToEvent;
   final void Function(String eventId)? onReplyTap;
   final void Function(MessageAction action, AppEvent event, {String? reaction})? onAction;
@@ -153,8 +156,8 @@ class MessageBubble extends StatelessWidget {
         child: _MediaAttachmentBubble(
           event: event,
           textColor: bubbleFill.textColor,
-          onImageTap: (provider) =>
-              _showFullScreenImage(context, provider),
+          onImageTap: (provider, bytes, url) =>
+              _showFullScreenImage(context, provider, bytes: bytes, url: url),
         ),
       );
       if (replyRef == null) return media;
@@ -297,31 +300,81 @@ class MessageBubble extends StatelessWidget {
     );
   }
 
-  void _showFullScreenImage(BuildContext context, ImageProvider imageProvider) {
+  void _showFullScreenImage(
+    BuildContext context,
+    ImageProvider imageProvider, {
+    Uint8List? bytes,
+    String? url,
+  }) {
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (context) => Scaffold(
-          backgroundColor: Colors.black,
-          appBar: AppBar(
+        builder: (context) {
+          Future<void> downloadImage() async {
+            try {
+              Uint8List? imageBytes = bytes;
+              if (imageBytes == null && url != null) {
+                final req = await HttpClient().getUrl(Uri.parse(url));
+                final client = Get.find<AuthController>().client;
+                if (client.accessToken != null) {
+                  req.headers.set('Authorization', 'Bearer ${client.accessToken}');
+                }
+                final res = await req.close();
+                imageBytes =
+                    Uint8List.fromList(await res.expand((x) => x).toList());
+              }
+              if (imageBytes != null) {
+                final tempDir = await getTemporaryDirectory();
+                final tempFile = File(
+                  '${tempDir.path}/dm_image_${DateTime.now().millisecondsSinceEpoch}.jpg',
+                );
+                await tempFile.writeAsBytes(imageBytes);
+                await Gal.putImage(tempFile.path);
+              } else {
+                throw Exception('No image data');
+              }
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Saved to gallery')),
+                );
+              }
+            } catch (e) {
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Failed to save: $e')),
+                );
+              }
+            }
+          }
+
+          return Scaffold(
             backgroundColor: Colors.black,
-            foregroundColor: Colors.white,
-            elevation: 0,
-            systemOverlayStyle: SystemUiOverlayStyle.light,
-            leading: IconButton(
-              icon: const Icon(Icons.close, color: Colors.white),
-              onPressed: () => Navigator.of(context).pop(),
+            appBar: AppBar(
+              backgroundColor: Colors.black,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              systemOverlayStyle: SystemUiOverlayStyle.light,
+              leading: IconButton(
+                icon: const Icon(Icons.close, color: Colors.white),
+                onPressed: () => Navigator.of(context).pop(),
+              ),
+              actions: [
+                IconButton(
+                  icon: const Icon(Icons.download, color: Colors.white),
+                  onPressed: downloadImage,
+                ),
+              ],
             ),
-          ),
-          body: Center(
-            child: PhotoView(
-              imageProvider: imageProvider,
-              minScale: PhotoViewComputedScale.contained * 0.8,
-              maxScale: PhotoViewComputedScale.covered * 2,
-              heroAttributes:
-                  PhotoViewHeroAttributes(tag: event.rawEvent.eventId),
+            body: Center(
+              child: PhotoView(
+                imageProvider: imageProvider,
+                minScale: PhotoViewComputedScale.contained * 0.8,
+                maxScale: PhotoViewComputedScale.covered * 2,
+                heroAttributes:
+                    PhotoViewHeroAttributes(tag: event.rawEvent.eventId),
+              ),
             ),
-          ),
-        ),
+          );
+        },
       ),
     );
   }
@@ -333,49 +386,70 @@ class MessageBubble extends StatelessWidget {
     final topSpacing = isFirstInGroup ? 12.0 : 3.0;
     final bottomSpacing = isLastInGroup ? 4.0 : 0.0;
 
+    final readReceiptWidgets = _buildReadReceipts(context);
+
     return Padding(
       padding: EdgeInsets.only(top: topSpacing, bottom: bottomSpacing),
-      child: Row(
-        mainAxisAlignment: isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
-        crossAxisAlignment: CrossAxisAlignment.end,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment:
+            isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
         children: [
-          if (!isMe) ...[
-            SizedBox(
-              width: 30,
-              child: Align(
-                alignment: Alignment.bottomLeft,
-                child: showAvatar ? _buildAvatar() : const SizedBox.shrink(),
-              ),
-            ),
-            const SizedBox(width: 8),
-          ],
-          Flexible(
-            child: ConstrainedBox(
-              constraints: BoxConstraints(
-                maxWidth: MediaQuery.sizeOf(context).width * 0.72,
-              ),
-              child: GestureDetector(
-                onLongPress: onAction != null
-                    ? () => _showActionSheet(context)
-                    : null,
-                onDoubleTap: onAction != null
-                    ? () => onAction!.call(MessageAction.react, event, reaction: '❤️')
-                    : null,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    _buildContent(context, bubbleFill),
-                    if (event.reactions.isNotEmpty)
-                      Transform.translate(
-                        offset: const Offset(0, -10),
-                        child: _buildReactions(context),
-                      ),
-                  ],
+          Row(
+            mainAxisAlignment:
+                isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              if (!isMe) ...[
+                SizedBox(
+                  width: 30,
+                  child: Align(
+                    alignment: Alignment.bottomLeft,
+                    child: showAvatar ? _buildAvatar() : const SizedBox.shrink(),
+                  ),
+                ),
+                const SizedBox(width: 8),
+              ],
+              Flexible(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: MediaQuery.sizeOf(context).width * 0.72,
+                  ),
+                  child: GestureDetector(
+                    onLongPress: onAction != null
+                        ? () {
+                            HapticFeedback.mediumImpact();
+                            _showActionSheet(context);
+                          }
+                        : null,
+                    onDoubleTap: onAction != null
+                        ? () {
+                            HapticFeedback.lightImpact();
+                            onAction!.call(MessageAction.react, event, reaction: '❤️');
+                          }
+                        : null,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _buildContent(context, bubbleFill),
+                        if (event.reactions.isNotEmpty)
+                          Transform.translate(
+                            offset: const Offset(0, -10),
+                            child: _buildReactions(context),
+                          ),
+                      ],
+                    ),
+                  ),
                 ),
               ),
-            ),
+            ],
           ),
+          if (isMe && showReadReceipts && readReceiptWidgets != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 3, right: 2),
+              child: readReceiptWidgets,
+            ),
         ],
       ),
     );
@@ -444,6 +518,131 @@ class MessageBubble extends StatelessWidget {
           fontSize: 11,
           fontWeight: FontWeight.w700,
           color: Color(0xFF5D6A7C),
+        ),
+      ),
+    );
+  }
+
+  Widget? _buildReadReceipts(BuildContext context) {
+    final receipts = event.rawEvent.receipts;
+    final client = Get.find<AuthController>().client;
+    final ownUserId = client.userID;
+
+    final otherReaders = receipts
+        .where((r) => r.user.id != ownUserId)
+        .toList();
+
+    if (otherReaders.isEmpty) return null;
+
+    const maxAvatars = 3;
+    const avatarSize = 14.0;
+    const overlap = 4.0;
+
+    Widget buildReaderAvatar(Receipt receipt, {double? size}) {
+      final s = size ?? avatarSize;
+      final user = receipt.user;
+      final displayName = user.displayName ?? user.id;
+      final initial = displayName.isNotEmpty ? displayName[0].toUpperCase() : '?';
+      final avatarImageUrl = resolveAvatarImageUrl(
+        user.avatarUrl,
+        client,
+        size: (s * 2).toInt(),
+      );
+
+      final avatarWidget = avatarImageUrl != null
+          ? CachedNetworkImage(
+              imageUrl: avatarImageUrl,
+              httpHeaders: {
+                if (client.accessToken != null)
+                  'Authorization': 'Bearer ${client.accessToken}',
+              },
+              imageBuilder: (context, imageProvider) => Container(
+                width: s,
+                height: s,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  image: DecorationImage(
+                    image: imageProvider,
+                    fit: BoxFit.cover,
+                  ),
+                  border: Border.all(
+                    color: Colors.white,
+                    width: 1.5,
+                  ),
+                ),
+              ),
+              placeholder: (context, url) => _buildInitialCircle(initial, s),
+              errorWidget: (context, url, error) {
+                markAvatarSourceBroken(user.avatarUrl);
+                return _buildInitialCircle(initial, s);
+              },
+            )
+          : _buildInitialCircle(initial, s);
+
+      return avatarWidget;
+    }
+
+    final visibleReaders = otherReaders.take(maxAvatars).toList();
+    final remaining = otherReaders.length - maxAvatars;
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (int i = 0; i < visibleReaders.length; i++)
+          Transform.translate(
+            offset: Offset(-i * overlap, 0),
+            child: buildReaderAvatar(visibleReaders[i]),
+          ),
+        if (remaining > 0)
+          Transform.translate(
+            offset: Offset(-visibleReaders.length * overlap, 0),
+            child: Container(
+              width: avatarSize,
+              height: avatarSize,
+              decoration: BoxDecoration(
+                color: Colors.grey.shade400,
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: Colors.white,
+                  width: 1.5,
+                ),
+              ),
+              child: Center(
+                child: Text(
+                  '+$remaining',
+                  style: const TextStyle(
+                    fontSize: 8,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildInitialCircle(String initial, double size) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: const Color(0xFF5AA7FF),
+        shape: BoxShape.circle,
+        border: Border.all(
+          color: Colors.white,
+          width: 1.5,
+        ),
+      ),
+      child: Center(
+        child: Text(
+          initial,
+          style: TextStyle(
+            fontSize: size * 0.5,
+            fontWeight: FontWeight.w700,
+            color: Colors.white,
+          ),
         ),
       ),
     );
@@ -601,6 +800,7 @@ class MessageBubble extends StatelessWidget {
                       return InkWell(
                         onTap: () {
                           Navigator.pop(ctx);
+                          HapticFeedback.lightImpact();
                           onAction?.call(MessageAction.react, event, reaction: emoji);
                         },
                         borderRadius: BorderRadius.circular(12),
@@ -644,6 +844,7 @@ class MessageBubble extends StatelessWidget {
                   label: 'Reply',
                   onTap: () {
                     Navigator.pop(ctx);
+                    HapticFeedback.lightImpact();
                     onAction?.call(MessageAction.reply, event);
                   },
                 ),
@@ -652,6 +853,7 @@ class MessageBubble extends StatelessWidget {
                   label: 'Copy',
                   onTap: () {
                     Navigator.pop(ctx);
+                    HapticFeedback.lightImpact();
                     onAction?.call(MessageAction.copy, event);
                   },
                 ),
@@ -660,6 +862,7 @@ class MessageBubble extends StatelessWidget {
                   label: 'Forward',
                   onTap: () {
                     Navigator.pop(ctx);
+                    HapticFeedback.lightImpact();
                     onAction?.call(MessageAction.forward, event);
                   },
                 ),
@@ -669,6 +872,7 @@ class MessageBubble extends StatelessWidget {
                     label: 'Edit',
                     onTap: () {
                       Navigator.pop(ctx);
+                      HapticFeedback.lightImpact();
                       onAction?.call(MessageAction.edit, event);
                     },
                   ),
@@ -711,6 +915,7 @@ class MessageBubble extends StatelessWidget {
                   label: 'Translate',
                   onTap: () {
                     Navigator.pop(ctx);
+                    HapticFeedback.lightImpact();
                     onAction?.call(MessageAction.translate, event);
                   },
                 ),
@@ -722,6 +927,7 @@ class MessageBubble extends StatelessWidget {
                     textColor: cs.error,
                     onTap: () {
                       Navigator.pop(ctx);
+                      HapticFeedback.mediumImpact();
                       onAction?.call(MessageAction.delete, event);
                     },
                   ),
@@ -954,7 +1160,7 @@ class _BubbleFill {
 class _MediaAttachmentBubble extends StatefulWidget {
   final AppEvent event;
   final Color textColor;
-  final void Function(ImageProvider imageProvider)? onImageTap;
+  final void Function(ImageProvider imageProvider, Uint8List? bytes, String? url)? onImageTap;
 
   const _MediaAttachmentBubble({
     required this.event,
@@ -1260,7 +1466,11 @@ class _MediaAttachmentBubbleState extends State<_MediaAttachmentBubble> {
               : () {
                   if (widget.onImageTap != null &&
                       _decryptedFullBytes != null) {
-                    widget.onImageTap!(MemoryImage(_decryptedFullBytes!));
+                    widget.onImageTap!(
+                      MemoryImage(_decryptedFullBytes!),
+                      _decryptedFullBytes,
+                      null,
+                    );
                   }
                 },
           child: Container(
@@ -1392,6 +1602,8 @@ class _MediaAttachmentBubbleState extends State<_MediaAttachmentBubble> {
                               'Bearer ${client.accessToken}',
                       },
                     ),
+                    null,
+                    openUrl,
                   );
                 }
               },

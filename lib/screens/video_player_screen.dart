@@ -1,11 +1,11 @@
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:dot_matrix/widgets/dot_matrix_loader.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:gal/gal.dart';
 import 'package:video_player/video_player.dart';
 
 class VideoPlayerScreen extends StatefulWidget {
@@ -121,6 +121,25 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     }
   }
 
+  Future<void> _saveVideo(BuildContext context) async {
+    final path = _videoPath;
+    if (path == null) return;
+    try {
+      await Gal.putVideo(path);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Saved to gallery')),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to save: $e')),
+        );
+      }
+    }
+  }
+
   void _togglePlay() {
     if (_controller == null) return;
     setState(() {
@@ -145,6 +164,13 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
           icon: const Icon(Icons.close, color: Colors.white),
           onPressed: () => Navigator.of(context).pop(),
         ),
+        actions: [
+          if (_videoPath != null)
+            IconButton(
+              icon: const Icon(Icons.download, color: Colors.white),
+              onPressed: () => _saveVideo(context),
+            ),
+        ],
       ),
       body: Center(
         child: _buildContent(),

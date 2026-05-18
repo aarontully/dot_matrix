@@ -1,9 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:get/get.dart';
+import 'package:matrix/encryption.dart';
 import 'package:matrix/matrix.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../utils/avatar_url_resolver.dart';
+import '../widgets/device_verification_dialog.dart';
 
 class AuthController extends GetxController with StateMixin<String?> {
   static const _storageTokenKey = 'matrix_token';
@@ -15,6 +19,7 @@ class AuthController extends GetxController with StateMixin<String?> {
 
   final FlutterSecureStorage _storage = const FlutterSecureStorage();
   Client _client = Client('Dot Matrix');
+  StreamSubscription? _verificationSubscription;
 
   Client get client => _client;
 
@@ -35,6 +40,7 @@ class AuthController extends GetxController with StateMixin<String?> {
     final newClient = Client(
       'Dot Matrix',
       databaseBuilder: (_) async => _openMatrixDatabase(),
+      verificationMethods: {KeyVerificationMethod.emoji},
     );
 
     return newClient;
@@ -144,6 +150,7 @@ class AuthController extends GetxController with StateMixin<String?> {
         waitUntilLoadCompletedLoaded: false,
       );
       await (_client.roomsLoading ?? Future.value());
+      _setupVerificationListener();
 
       change(userId, status: RxStatus.success());
     } catch (error) {
@@ -202,6 +209,20 @@ class AuthController extends GetxController with StateMixin<String?> {
     }
   }
 
+  void _setupVerificationListener() {
+    _verificationSubscription?.cancel();
+    _verificationSubscription = _client.onKeyVerificationRequest.stream.listen(
+      (request) {
+        request.onUpdate = () {
+          if (request.isDone) {
+            request.onUpdate = null;
+          }
+        };
+        Get.dialog(DeviceVerificationDialog(request: request));
+      },
+    );
+  }
+
   Future<void> persistDeviceName(String deviceName) async {
     await _storage.write(key: _storageDeviceNameKey, value: deviceName);
   }
@@ -216,6 +237,8 @@ class AuthController extends GetxController with StateMixin<String?> {
 
     await _clearStoredSession();
     clearBrokenAvatarSources();
+    _verificationSubscription?.cancel();
+    _verificationSubscription = null;
     _client = await _createClient();
     change(null, status: RxStatus.success());
   }
