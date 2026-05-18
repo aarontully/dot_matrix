@@ -1,5 +1,6 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:dot_matrix/widgets/dot_matrix_loader.dart';
 import 'package:get/get.dart';
 import 'package:intl/intl.dart';
 import 'package:matrix/matrix.dart';
@@ -64,10 +65,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   (rooms) => Obx(
                     () => _buildChatsTab(context, rooms ?? []),
                   ),
-                  onLoading: Center(
-                    child: CircularProgressIndicator(
-                      color: Theme.of(context).colorScheme.primary,
-                    ),
+                  onLoading: const Center(
+                    child: DotMatrixLoader(),
                   ),
                   onError: (error) => _buildErrorState(
                     context,
@@ -77,10 +76,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 _HomeTab.activity => roomController.obx(
                   (rooms) => _buildActivityTab(context, rooms ?? []),
-                  onLoading: Center(
-                    child: CircularProgressIndicator(
-                      color: Theme.of(context).colorScheme.primary,
-                    ),
+                  onLoading: const Center(
+                    child: DotMatrixLoader(),
                   ),
                   onError: (error) => _buildErrorState(
                     context,
@@ -252,7 +249,7 @@ class _HomeScreenState extends State<HomeScreen> {
         return Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            CircularProgressIndicator(color: cs.primary),
+            const DotMatrixLoader(),
             const SizedBox(height: 24),
             Text(
               'Syncing with Matrix...',
@@ -333,7 +330,7 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  CircularProgressIndicator(color: cs.primary),
+                  const DotMatrixLoader(),
                   const SizedBox(height: 24),
                   Text(
                     'Syncing with Matrix...',

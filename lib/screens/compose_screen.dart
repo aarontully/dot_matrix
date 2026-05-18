@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:dot_matrix/widgets/dot_matrix_loader.dart';
 import 'package:get/get.dart';
 import 'package:matrix/matrix.dart';
 
@@ -101,8 +102,9 @@ class _ComposeScreenState extends State<ComposeScreen> {
                             ? const SizedBox(
                                 width: 20,
                                 height: 20,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
+                                child: DotMatrixLoader(
+                                  size: 20,
+                                  dotSize: 3,
                                   color: Colors.white,
                                 ),
                               )

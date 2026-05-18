@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:dot_matrix/widgets/dot_matrix_loader.dart';
 import 'package:get/get.dart';
 
 import '../controllers/settings_controller.dart';
@@ -44,7 +45,7 @@ class _EncryptionSettingsScreenState extends State<EncryptionSettingsScreen> {
           if (settings == null) return const SizedBox.shrink();
           return _buildContent(context, settings);
         },
-        onLoading: const Center(child: CircularProgressIndicator()),
+        onLoading: const Center(child: DotMatrixLoader()),
         onError: (error) => Center(
           child: Padding(
             padding: const EdgeInsets.all(24),

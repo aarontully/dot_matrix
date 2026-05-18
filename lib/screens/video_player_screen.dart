@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:dot_matrix/widgets/dot_matrix_loader.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -153,7 +154,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
   Widget _buildContent() {
     if (_isLoading) {
-      return const CircularProgressIndicator(color: Colors.white);
+      return const DotMatrixLoader(color: Colors.white);
     }
     if (_hasError || _controller == null || !_controller!.value.isInitialized) {
       return Column(

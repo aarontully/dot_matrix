@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:dot_matrix/widgets/dot_matrix_loader.dart';
 import 'package:get/get.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
@@ -42,7 +43,7 @@ class MainApp extends StatelessWidget {
           themeMode: appearance.themeMode,
           home: Get.find<AuthController>().obx(
             (userId) => userId != null ? const HomeScreen() : const LoginScreen(),
-            onLoading: const Scaffold(body: Center(child: CircularProgressIndicator())),
+            onLoading: const Scaffold(body: Center(child: DotMatrixLoader())),
             onError: (error) => Scaffold(body: Center(child: Text('Error: $error'))),
           ),
         );

@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:dot_matrix/widgets/dot_matrix_loader.dart';
 import 'package:get/get.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
@@ -275,9 +276,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                     child: SizedBox(
                                       width: 20,
                                       height: 20,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                      ),
+                                      child: DotMatrixLoader(size: 20, dotSize: 3),
                                     ),
                                   ),
                                 );
@@ -1026,8 +1025,9 @@ class _ChatScreenState extends State<ChatScreen> {
               SizedBox(
                 width: 14,
                 height: 14,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
+                child: DotMatrixLoader(
+                  size: 14,
+                  dotSize: 2.5,
                   color: cs.onSurfaceVariant.withValues(alpha: 0.6),
                 ),
               ),

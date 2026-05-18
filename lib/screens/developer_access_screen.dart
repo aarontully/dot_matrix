@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:dot_matrix/widgets/dot_matrix_loader.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 
@@ -308,7 +309,7 @@ class _DeveloperAccessScreenState extends State<DeveloperAccessScreen> {
                         ? const SizedBox(
                             width: 22,
                             height: 22,
-                            child: CircularProgressIndicator(strokeWidth: 2),
+                            child: DotMatrixLoader(size: 22, dotSize: 3),
                           )
                         : const Text('Update'),
                   ),

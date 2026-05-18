@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:dot_matrix/widgets/dot_matrix_loader.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_linkify/flutter_linkify.dart';
 import 'package:intl/intl.dart';
@@ -1245,7 +1246,7 @@ class _MediaAttachmentBubbleState extends State<_MediaAttachmentBubble> {
         width: 150,
         height: 150,
         child: Center(
-          child: CircularProgressIndicator(strokeWidth: 2),
+          child: DotMatrixLoader(size: 24, dotSize: 3),
         ),
       );
     }
@@ -1420,8 +1421,9 @@ class _MediaAttachmentBubbleState extends State<_MediaAttachmentBubble> {
                   },
                   fit: BoxFit.cover,
                   placeholder: (context, url) => Center(
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
+                    child: DotMatrixLoader(
+                      size: 24,
+                      dotSize: 3,
                       color: widget.textColor,
                     ),
                   ),
@@ -1438,8 +1440,9 @@ class _MediaAttachmentBubbleState extends State<_MediaAttachmentBubble> {
                         });
                       });
                       return Center(
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
+                        child: DotMatrixLoader(
+                          size: 24,
+                          dotSize: 3,
                           color: widget.textColor,
                         ),
                       );
@@ -1779,8 +1782,9 @@ class _AudioAttachmentBubbleState extends State<_AudioAttachmentBubble> {
         child: SizedBox(
           width: 20,
           height: 20,
-          child: CircularProgressIndicator(
-            strokeWidth: 2,
+          child: DotMatrixLoader(
+            size: 20,
+            dotSize: 3,
             color: widget.textColor,
           ),
         ),

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:dot_matrix/widgets/dot_matrix_loader.dart';
 import 'package:get/get.dart';
 
 import '../controllers/room_controller.dart';
@@ -33,7 +34,7 @@ class SpaceRoomsScreen extends StatelessWidget {
           }
           return _SpaceRoomsList(rooms: rooms);
         },
-        onLoading: const Center(child: CircularProgressIndicator()),
+        onLoading: const Center(child: DotMatrixLoader()),
         onError: (error) => Center(child: Text('Error: $error')),
       ),
     );

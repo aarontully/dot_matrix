@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:dot_matrix/widgets/dot_matrix_loader.dart';
 import 'package:get/get.dart';
 
 import '../controllers/settings_controller.dart';
@@ -56,7 +57,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
                     if (snapshot.connectionState == ConnectionState.waiting) {
                       return const Padding(
                         padding: EdgeInsets.symmetric(vertical: 20),
-                        child: Center(child: CircularProgressIndicator()),
+                        child: Center(child: DotMatrixLoader()),
                       );
                     }
                     if (snapshot.hasError) {

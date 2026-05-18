@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
+  <!-- Background circle -->
+  <circle cx="60" cy="60" r="56" fill="#0084FF"/>
+  
+  <!-- Dot matrix grid forming a chat bubble / diamond pattern -->
+  <!-- Row 1 -->
+  <circle cx="36" cy="24" r="3" fill="rgba(255,255,255,0.15)"/>
+  <circle cx="48" cy="24" r="3" fill="rgba(255,255,255,0.15)"/>
+  <circle cx="60" cy="24" r="3" fill="rgba(255,255,255,0.15)"/>
+  <circle cx="72" cy="24" r="3" fill="rgba(255,255,255,0.15)"/>
+  <circle cx="84" cy="24" r="3" fill="rgba(255,255,255,0.15)"/>
+  
+  <!-- Row 2 -->
+  <circle cx="36" cy="36" r="3" fill="rgba(255,255,255,0.15)"/>
+  <circle cx="48" cy="36" r="3" fill="rgba(255,255,255,0.15)"/>
+  <circle cx="60" cy="36" r="3" fill="rgba(255,255,255,0.15)"/>
+  <circle cx="72" cy="36" r="3" fill="rgba(255,255,255,0.15)"/>
+  <circle cx="84" cy="36" r="3" fill="rgba(255,255,255,0.15)"/>
+  
+  <!-- Row 3 (bright center pattern - diamond shape) -->
+  <circle cx="36" cy="48" r="3" fill="rgba(255,255,255,0.3)"/>
+  <circle cx="48" cy="48" r="3" fill="#ffffff"/>
+  <circle cx="60" cy="48" r="3" fill="#ffffff"/>
+  <circle cx="72" cy="48" r="3" fill="#ffffff"/>
+  <circle cx="84" cy="48" r="3" fill="rgba(255,255,255,0.3)"/>
+  
+  <!-- Row 4 -->
+  <circle cx="36" cy="60" r="3" fill="rgba(255,255,255,0.3)"/>
+  <circle cx="48" cy="60" r="3" fill="#ffffff"/>
+  <circle cx="60" cy="60" r="3" fill="#ffffff"/>
+  <circle cx="72" cy="60" r="3" fill="#ffffff"/>
+  <circle cx="84" cy="60" r="3" fill="rgba(255,255,255,0.3)"/>
+  
+  <!-- Row 5 -->
+  <circle cx="36" cy="72" r="3" fill="rgba(255,255,255,0.15)"/>
+  <circle cx="48" cy="72" r="3" fill="#ffffff"/>
+  <circle cx="60" cy="72" r="3" fill="#ffffff"/>
+  <circle cx="72" cy="72" r="3" fill="#ffffff"/>
+  <circle cx="84" cy="72" r="3" fill="rgba(255,255,255,0.15)"/>
+  
+  <!-- Row 6 (chat bubble tail) -->
+  <circle cx="36" cy="84" r="3" fill="rgba(255,255,255,0.15)"/>
+  <circle cx="48" cy="84" r="3" fill="rgba(255,255,255,0.15)"/>
+  <circle cx="60" cy="84" r="3" fill="#ffffff"/>
+  <circle cx="72" cy="84" r="3" fill="rgba(255,255,255,0.15)"/>
+  <circle cx="84" cy="84" r="3" fill="rgba(255,255,255,0.15)"/>
+  
+  <!-- Row 7 -->
+  <circle cx="36" cy="96" r="3" fill="rgba(255,255,255,0.15)"/>
+  <circle cx="48" cy="96" r="3" fill="rgba(255,255,255,0.15)"/>
+  <circle cx="60" cy="96" r="3" fill="rgba(255,255,255,0.15)"/>
+  <circle cx="72" cy="96" r="3" fill="rgba(255,255,255,0.15)"/>
+  <circle cx="84" cy="96" r="3" fill="rgba(255,255,255,0.15)"/>
+</svg>

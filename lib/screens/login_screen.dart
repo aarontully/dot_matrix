@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:dot_matrix/widgets/dot_matrix_loader.dart';
 import 'package:get/get.dart';
 
 import '../controllers/auth_controller.dart';
@@ -123,7 +124,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       onLoading: const Center(
                         child: Padding(
                           padding: EdgeInsets.symmetric(vertical: 16),
-                          child: CircularProgressIndicator(),
+                          child: DotMatrixLoader(),
                         ),
                       ),
                       onError: (error) => Column(
