@@ -216,7 +216,8 @@ class RoomController extends GetxController with StateMixin<List<AppRoom>> {
                 .where(
                   (e) =>
                       (e.type == EventTypes.Message ||
-                          e.type == EventTypes.Encrypted) &&
+                          e.type == EventTypes.Encrypted ||
+                          e.type == EventTypes.Sticker) &&
                       e.relationshipType != RelationshipTypes.edit,
                 )
                 .map(

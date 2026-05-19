@@ -60,40 +60,43 @@ class _DotMatrixLoaderState extends State<DotMatrixLoader>
       width: widget.size,
       height: widget.size,
       child: Center(
-        child: SizedBox(
-          width: totalWidth,
-          height: totalHeight,
-          child: AnimatedBuilder(
-            animation: _controller,
-            builder: (context, child) {
-              final t = _controller.value;
-              return Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  for (int r = 0; r < _rows; r++)
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        for (int c = 0; c < _cols; c++)
-                          Container(
-                            width: widget.dotSize,
-                            height: widget.dotSize,
-                            margin: EdgeInsets.only(
-                              right: c < _cols - 1 ? widget.spacing : 0,
-                              bottom: r < _rows - 1 ? widget.spacing : 0,
-                            ),
-                            decoration: BoxDecoration(
-                              color: dotColor.withValues(
-                                alpha: _dotOpacity(r, c, t),
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: SizedBox(
+            width: totalWidth,
+            height: totalHeight,
+            child: AnimatedBuilder(
+              animation: _controller,
+              builder: (context, child) {
+                final t = _controller.value;
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    for (int r = 0; r < _rows; r++)
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          for (int c = 0; c < _cols; c++)
+                            Container(
+                              width: widget.dotSize,
+                              height: widget.dotSize,
+                              margin: EdgeInsets.only(
+                                right: c < _cols - 1 ? widget.spacing : 0,
+                                bottom: r < _rows - 1 ? widget.spacing : 0,
                               ),
-                              shape: BoxShape.circle,
+                              decoration: BoxDecoration(
+                                color: dotColor.withValues(
+                                  alpha: _dotOpacity(r, c, t),
+                                ),
+                                shape: BoxShape.circle,
+                              ),
                             ),
-                          ),
-                      ],
-                    ),
-                ],
-              );
-            },
+                        ],
+                      ),
+                  ],
+                );
+              },
+            ),
           ),
         ),
       ),

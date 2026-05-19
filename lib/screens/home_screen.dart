@@ -33,6 +33,7 @@ enum _ActivityKind {
   emote,
   image,
   video,
+  sticker,
   reaction,
   encryptedMessage,
 }
@@ -1145,6 +1146,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isActivityEligibleEvent(Event ev) {
     if (ev.type == EventTypes.Reaction) return true;
     if (ev.type == EventTypes.Encrypted) return true;
+    if (ev.type == EventTypes.Sticker) return true;
     if (ev.type != EventTypes.Message) return false;
     switch (ev.messageType) {
       case MessageTypes.Text:
@@ -1164,12 +1166,17 @@ class _HomeScreenState extends State<HomeScreen> {
     if (ev.type == EventTypes.Encrypted) {
       return ('New message', 'Encrypted', _ActivityKind.encryptedMessage);
     }
+    if (ev.type == EventTypes.Sticker) {
+      return ('New sticker', 'Sticker', _ActivityKind.sticker);
+    }
     if (ev.type == EventTypes.Message) {
       switch (ev.messageType) {
         case MessageTypes.Image:
           return ('New image', 'Image', _ActivityKind.image);
         case MessageTypes.Video:
           return ('New video', 'Video', _ActivityKind.video);
+        case MessageTypes.Sticker:
+          return ('New sticker', 'Sticker', _ActivityKind.sticker);
         case MessageTypes.Text:
           return ('New message', 'Message', _ActivityKind.textMessage);
         case MessageTypes.Emote:
@@ -1390,6 +1397,7 @@ class _ActivityItem {
     _ActivityKind.emote => const Color(0xFFE91E8C),
     _ActivityKind.image => const Color(0xFF8E44AD),
     _ActivityKind.video => const Color(0xFFC0392B),
+    _ActivityKind.sticker => const Color(0xFF8E44AD),
     _ActivityKind.reaction => const Color(0xFFFF8A34),
     _ActivityKind.encryptedMessage => const Color(0xFF546E7A),
   };
@@ -1399,6 +1407,7 @@ class _ActivityItem {
     _ActivityKind.emote => Icons.emoji_emotions_outlined,
     _ActivityKind.image => Icons.image_outlined,
     _ActivityKind.video => Icons.videocam_outlined,
+    _ActivityKind.sticker => Icons.sticky_note_2_outlined,
     _ActivityKind.reaction => Icons.add_reaction_outlined,
     _ActivityKind.encryptedMessage => Icons.lock_outline,
   };

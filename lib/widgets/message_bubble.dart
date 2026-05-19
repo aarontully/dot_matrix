@@ -49,7 +49,11 @@ class MessageBubble extends StatelessWidget {
 
   bool get _isVisualMedia {
     final type = event.rawEvent.messageType;
-    if (type == MessageTypes.Image || type == MessageTypes.Video) return true;
+    if (type == MessageTypes.Image ||
+        type == MessageTypes.Video ||
+        type == MessageTypes.Sticker) {
+      return true;
+    }
     final hasUrl = event.rawEvent.content['url'] is String ||
         event.rawEvent.content['file'] is Map;
     if (type == MessageTypes.File || hasUrl) {
@@ -59,20 +63,60 @@ class MessageBubble extends StatelessWidget {
         if (mime.startsWith('image/') || mime.startsWith('video/')) return true;
       }
     }
-    final body = event.body.toLowerCase();
-    if (body.endsWith('.jpg') ||
-        body.endsWith('.jpeg') ||
-        body.endsWith('.png') ||
-        body.endsWith('.gif') ||
-        body.endsWith('.webp') ||
-        body.endsWith('.bmp') ||
-        body.endsWith('.heic') ||
-        body.endsWith('.mp4') ||
-        body.endsWith('.mov') ||
-        body.endsWith('.avi') ||
-        body.endsWith('.mkv') ||
-        body.endsWith('.webm')) {
-      return true;
+    // Check processed body and raw content fields; some bridges use
+    // custom msgtypes that don't hit the first check above.
+    final candidates = [
+      event.body,
+      event.rawEvent.content['body'],
+      event.rawEvent.content['filename'],
+      event.rawEvent.content['name'],
+    ].whereType<String>().map((s) => s.toLowerCase().trim());
+
+    for (final text in candidates) {
+      if (text.endsWith('.jpg') ||
+          text.endsWith('.jpeg') ||
+          text.endsWith('.png') ||
+          text.endsWith('.gif') ||
+          text.endsWith('.webp') ||
+          text.endsWith('.bmp') ||
+          text.endsWith('.heic') ||
+          text.endsWith('.mp4') ||
+          text.endsWith('.mov') ||
+          text.endsWith('.avi') ||
+          text.endsWith('.mkv') ||
+          text.endsWith('.webm')) {
+        return true;
+      }
+      if (RegExp(r'\.\s*(?:jpg|jpeg|png|gif|webp|bmp|heic|mp4|mov|avi|mkv|webm)\b')
+          .hasMatch(text)) {
+        return true;
+      }
+      if (RegExp(r'https?://[^\s]+\.(?:jpg|jpeg|png|gif|webp|bmp|heic|mp4|mov|avi|mkv|webm)')
+          .hasMatch(text)) {
+        return true;
+      }
+    }
+    // Brute-force: some bridges stash the filename or URL in an arbitrary key.
+    final extPattern =
+        RegExp(r'\.(?:jpg|jpeg|png|gif|webp|bmp|heic|mp4|mov|avi|mkv|webm)\b');
+    final urlPattern = RegExp(
+        r'https?://[^\s<>"{}|\\^`\[\]]+\.(?:jpg|jpeg|png|gif|webp|bmp|heic|mp4|mov|avi|mkv|webm)');
+    for (final value in event.rawEvent.content.values) {
+      if (value is String) {
+        final v = value.toLowerCase();
+        if (extPattern.hasMatch(v) || urlPattern.hasMatch(v)) {
+          return true;
+        }
+      } else if (value is Map) {
+        for (final nested in value.values) {
+          if (nested is String) {
+            final v = nested.toLowerCase();
+            if (extPattern.hasMatch(v) || urlPattern.hasMatch(v)) {
+              return true;
+            }
+          }
+        }
+      }
     }
     return false;
   }
@@ -1215,12 +1259,52 @@ class _MediaAttachmentBubbleState extends State<_MediaAttachmentBubble> {
   bool _advancePreviewFromErrorScheduled = false;
 
   String? _findMxcUrl(Event ev) {
+    // Prefer the SDK getter which handles encrypted/unencrypted properly
+    try {
+      final sdkUrl = ev.attachmentMxcUrl?.toString();
+      if (sdkUrl != null && sdkUrl.isNotEmpty) return sdkUrl;
+    } catch (_) {}
+
+    // Fallback to raw content; accept any non-empty URL string
     final url = ev.content['url'];
-    if (url is String && url.startsWith('mxc://')) return url;
+    if (url is String && url.trim().isNotEmpty) return url.trim();
     final file = ev.content['file'];
     if (file is Map) {
       final fileUrl = file['url'];
-      if (fileUrl is String && fileUrl.startsWith('mxc://')) return fileUrl;
+      if (fileUrl is String && fileUrl.trim().isNotEmpty) return fileUrl.trim();
+    }
+    // Some bridges (e.g. Google Images) put the URL inside info
+    final info = ev.content['info'];
+    if (info is Map) {
+      final infoUrl = info['url'];
+      if (infoUrl is String && infoUrl.trim().isNotEmpty) return infoUrl.trim();
+    }
+    // Fallback: any URL-looking string in the body or formatted_body
+    for (final field in ['body', 'formatted_body']) {
+      final text = ev.content[field];
+      if (text is String) {
+        // If HTML, strip tags first
+        final plain = text.replaceAll(RegExp(r'<[^>]+>'), ' ');
+        final match = RegExp(r'https?://[^\s<>"{}|\\^`\[\]]+').firstMatch(plain);
+        if (match != null) return match.group(0);
+      }
+    }
+    // Brute-force: scan every nested string value for a URL.
+    final urlPattern = RegExp(r'https?://[^\s<>"{}|\\^`\[\]]+');
+    for (final value in ev.content.values) {
+      if (value is String) {
+        final plain = value.replaceAll(RegExp(r'<[^>]+>'), ' ');
+        final match = urlPattern.firstMatch(plain);
+        if (match != null) return match.group(0);
+      } else if (value is Map) {
+        for (final nested in value.values) {
+          if (nested is String) {
+            final plain = nested.replaceAll(RegExp(r'<[^>]+>'), ' ');
+            final match = urlPattern.firstMatch(plain);
+            if (match != null) return match.group(0);
+          }
+        }
+      }
     }
     return null;
   }
@@ -1229,9 +1313,10 @@ class _MediaAttachmentBubbleState extends State<_MediaAttachmentBubble> {
     final info = widget.event.rawEvent.content['info'];
     if (info is Map) {
       final mime = (info['mimetype'] as String?)?.toLowerCase() ?? '';
-      return mime.contains('gif');
+      if (mime.contains('gif')) return true;
     }
-    return false;
+    // Some bridges omit the mimetype; fall back to the body.
+    return widget.event.body.toLowerCase().endsWith('.gif');
   }
 
   @override
@@ -1262,7 +1347,15 @@ class _MediaAttachmentBubbleState extends State<_MediaAttachmentBubble> {
       final client = Get.find<AuthController>().client;
       final ev = widget.event.rawEvent;
 
-      if (!ev.hasAttachment) {
+      debugPrint(
+        '[_MediaAttachmentBubble] eventId=${ev.eventId} '
+        'type=${ev.type} msgtype=${ev.messageType} '
+        'content=${ev.content}',
+      );
+
+      final mxcUrl = _findMxcUrl(ev);
+      final hasMediaUrl = mxcUrl != null || ev.thumbnailMxcUrl != null;
+      if (!hasMediaUrl && !ev.hasAttachment) {
         if (ev.status == EventStatus.sending) {
           // Still uploading; leave spinner running until didUpdateWidget
           // re-triggers once the content is populated.
@@ -1316,20 +1409,21 @@ class _MediaAttachmentBubbleState extends State<_MediaAttachmentBubble> {
               _isLoading = false;
             });
           }
-        } catch (e) {
-          if (mounted) {
-            setState(() {
-              _error = 'Media unavailable';
-              _isLoading = false;
-            });
-          }
+          return;
+        } catch (_) {
+          // Decryption failed; fall through to unencrypted URL path
+          // in case the event is not actually encrypted.
         }
-        return;
       }
 
       final previewCandidates = <String>[];
       final mainMxc = _findMxcUrl(ev);
-      final thumbMxc = ev.thumbnailMxcUrl?.toString();
+      String? thumbMxc;
+      try {
+        thumbMxc = ev.thumbnailMxcUrl?.toString();
+      } catch (_) {
+        thumbMxc = null;
+      }
 
       void addThumbnail(String? mxc) {
         if (mxc == null || !mxc.startsWith('mxc://')) return;
@@ -1360,26 +1454,34 @@ class _MediaAttachmentBubbleState extends State<_MediaAttachmentBubble> {
         }
       }
 
-      if (mainMxc != null && mainMxc.startsWith('mxc://')) {
-        try {
-          final mainUri = Uri.parse(mainMxc);
-          final dlV1 = withMatrixMediaAllowRedirect(
-            mxcToClientV1MediaDownload(mainUri, client),
-          ).toString();
-          final dlV3 = withMatrixMediaAllowRedirect(
-            mainUri.getDownloadLink(client),
-          ).toString();
-          _fullImageUrl = dlV1.isNotEmpty ? dlV1 : dlV3;
+      if (mainMxc != null && mainMxc.isNotEmpty) {
+        if (mainMxc.startsWith('mxc://')) {
+          try {
+            final mainUri = Uri.parse(mainMxc);
+            final v1Uri = mxcToClientV1MediaDownload(mainUri, client);
+            final dlV1 = v1Uri.toString().isNotEmpty
+                ? withMatrixMediaAllowRedirect(v1Uri).toString()
+                : '';
+            final v3Uri = mainUri.getDownloadLink(client);
+            final dlV3 = v3Uri.toString().isNotEmpty
+                ? withMatrixMediaAllowRedirect(v3Uri).toString()
+                : '';
+            _fullImageUrl = dlV1.isNotEmpty ? dlV1 : dlV3;
 
-          if (_isGif) {
-            for (final u in [dlV1, dlV3]) {
-              if (u.isNotEmpty && !previewCandidates.contains(u)) {
-                previewCandidates.add(u);
+            if (_isGif) {
+              for (final u in [dlV1, dlV3]) {
+                if (u.isNotEmpty && !previewCandidates.contains(u)) {
+                  previewCandidates.add(u);
+                }
               }
             }
+          } catch (_) {
+            // URL generation failed; continue to try thumbnails or fall back.
           }
-        } catch (_) {
-          // URL generation failed; continue to try thumbnails or fall back.
+        } else {
+          // Non-mxc URL (e.g., HTTP); use directly
+          _fullImageUrl = mainMxc;
+          previewCandidates.add(mainMxc);
         }
       }
 
