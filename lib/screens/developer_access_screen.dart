@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:dot_matrix/widgets/dot_matrix_loader.dart';
 import 'package:flutter/services.dart';
@@ -216,8 +218,7 @@ class _DeveloperAccessScreenState extends State<DeveloperAccessScreen> {
 
   Future<void> _showChangeRecoveryKeyDialog(BuildContext context) async {
     final currentCtrl = TextEditingController();
-    final nextCtrl = TextEditingController();
-    final formKey = GlobalKey<FormState>();
+    final generatedPassphrase = _generateRecoveryPassphrase();
     var busy = false;
 
     try {
@@ -229,50 +230,84 @@ class _DeveloperAccessScreenState extends State<DeveloperAccessScreen> {
               return AlertDialog(
                 title: const Text('Change recovery passphrase'),
                 content: SingleChildScrollView(
-                  child: Form(
-                    key: formKey,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Text(
-                          'Enter your current Matrix recovery key or Secure Backup passphrase, then choose a new passphrase (at least 8 characters). This updates Secure Backup.',
-                          style: Theme.of(
-                            ctx,
-                          ).textTheme.bodySmall?.copyWith(height: 1.35),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        'Enter your current recovery passphrase to confirm, then save the generated new passphrase somewhere safe. This updates your Secure Backup.',
+                        style: Theme.of(
+                          ctx,
+                        ).textTheme.bodySmall?.copyWith(height: 1.35),
+                      ),
+                      const SizedBox(height: 16),
+                      TextFormField(
+                        controller: currentCtrl,
+                        obscureText: true,
+                        autocorrect: false,
+                        decoration: const InputDecoration(
+                          labelText: 'Current recovery passphrase',
                         ),
-                        const SizedBox(height: 16),
-                        TextFormField(
-                          controller: currentCtrl,
-                          obscureText: true,
-                          autocorrect: false,
-                          decoration: const InputDecoration(
-                            labelText: 'Current recovery key or passphrase',
+                      ),
+                      const SizedBox(height: 16),
+                      Container(
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: Theme.of(ctx).colorScheme.surfaceContainerHighest,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Generated passphrase',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: Theme.of(ctx).colorScheme.onSurface.withValues(alpha: 0.7),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            SelectableText(
+                              generatedPassphrase,
+                              style: const TextStyle(
+                                fontFamily: 'monospace',
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                height: 1.6,
+                                letterSpacing: 0.5,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: busy
+                                  ? null
+                                  : () async {
+                                      await Clipboard.setData(
+                                        ClipboardData(text: generatedPassphrase),
+                                      );
+                                      if (ctx.mounted) {
+                                        Get.snackbar(
+                                          '',
+                                          'Passphrase copied',
+                                          snackPosition: SnackPosition.BOTTOM,
+                                          duration: const Duration(seconds: 1),
+                                        );
+                                      }
+                                    },
+                              icon: const Icon(Icons.copy, size: 18),
+                              label: const Text('Copy'),
+                            ),
                           ),
-                          validator: (v) {
-                            if (v == null || v.trim().isEmpty) {
-                              return 'Required';
-                            }
-                            return null;
-                          },
-                        ),
-                        const SizedBox(height: 12),
-                        TextFormField(
-                          controller: nextCtrl,
-                          obscureText: true,
-                          autocorrect: false,
-                          decoration: const InputDecoration(
-                            labelText: 'New passphrase',
-                          ),
-                          validator: (v) {
-                            if (v == null || v.trim().length < 8) {
-                              return 'At least 8 characters';
-                            }
-                            return null;
-                          },
-                        ),
-                      ],
-                    ),
+                        ],
+                      ),
+                    ],
                   ),
                 ),
                 actions: [
@@ -284,7 +319,8 @@ class _DeveloperAccessScreenState extends State<DeveloperAccessScreen> {
                     onPressed: busy
                         ? null
                         : () async {
-                            if (!(formKey.currentState?.validate() ?? false)) {
+                            if (currentCtrl.text.trim().isEmpty) {
+                              Get.snackbar('Error', 'Enter your current recovery passphrase');
                               return;
                             }
                             setDialog(() => busy = true);
@@ -292,7 +328,7 @@ class _DeveloperAccessScreenState extends State<DeveloperAccessScreen> {
                               final msg = await Get.find<SettingsController>()
                                   .changeRecoveryPassphrase(
                                     currentSecret: currentCtrl.text,
-                                    newPassphrase: nextCtrl.text,
+                                    newPassphrase: generatedPassphrase,
                                   );
                               if (ctx.mounted) {
                                 Navigator.pop(ctx);
@@ -311,7 +347,7 @@ class _DeveloperAccessScreenState extends State<DeveloperAccessScreen> {
                             height: 22,
                             child: DotMatrixLoader(size: 22, dotSize: 3),
                           )
-                        : const Text('Update'),
+                        : const Text('Confirm'),
                   ),
                 ],
               );
@@ -321,7 +357,20 @@ class _DeveloperAccessScreenState extends State<DeveloperAccessScreen> {
       );
     } finally {
       currentCtrl.dispose();
-      nextCtrl.dispose();
     }
+  }
+
+  String _generateRecoveryPassphrase() {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    final rand = Random.secure();
+    final groups = <String>[];
+    for (var g = 0; g < 12; g++) {
+      final sb = StringBuffer();
+      for (var i = 0; i < 4; i++) {
+        sb.write(chars[rand.nextInt(chars.length)]);
+      }
+      groups.add(sb.toString());
+    }
+    return groups.join(' ');
   }
 }

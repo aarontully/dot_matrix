@@ -67,22 +67,30 @@ class _DotMatrixLoaderState extends State<DotMatrixLoader>
             animation: _controller,
             builder: (context, child) {
               final t = _controller.value;
-              return Wrap(
-                spacing: widget.spacing,
-                runSpacing: widget.spacing,
+              return Column(
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   for (int r = 0; r < _rows; r++)
-                    for (int c = 0; c < _cols; c++)
-                      Container(
-                        width: widget.dotSize,
-                        height: widget.dotSize,
-                        decoration: BoxDecoration(
-                          color: dotColor.withValues(
-                            alpha: _dotOpacity(r, c, t),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        for (int c = 0; c < _cols; c++)
+                          Container(
+                            width: widget.dotSize,
+                            height: widget.dotSize,
+                            margin: EdgeInsets.only(
+                              right: c < _cols - 1 ? widget.spacing : 0,
+                              bottom: r < _rows - 1 ? widget.spacing : 0,
+                            ),
+                            decoration: BoxDecoration(
+                              color: dotColor.withValues(
+                                alpha: _dotOpacity(r, c, t),
+                              ),
+                              shape: BoxShape.circle,
+                            ),
                           ),
-                          shape: BoxShape.circle,
-                        ),
-                      ),
+                      ],
+                    ),
                 ],
               );
             },

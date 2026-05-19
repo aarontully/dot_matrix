@@ -21,9 +21,9 @@ import 'app_settings_screen.dart';
 import 'settings_screen.dart';
 import 'chat_screen.dart';
 import 'compose_screen.dart';
+import 'bridge_identities_screen.dart';
 import 'developer_access_screen.dart';
 import 'encryption_settings_screen.dart';
-import 'notification_settings_screen.dart';
 import 'sessions_screen.dart';
 
 enum _HomeTab { chats, activity, menu }
@@ -608,17 +608,9 @@ class _HomeScreenState extends State<HomeScreen> {
           _buildMenuSection(
             context,
             title: 'Settings',
-            subtitle: 'Manage notifications, encryption, sessions, and more.',
+            subtitle: 'Manage encryption, sessions, and more.',
             child: Column(
               children: [
-                _buildMenuTile(
-                  context,
-                  icon: Icons.notifications_outlined,
-                  title: 'Notifications',
-                  subtitle: _menuNotificationsSubtitle(),
-                  onTap: () => _openNotificationSettings(context),
-                ),
-                const Divider(height: 1),
                 _buildMenuTile(
                   context,
                   icon: Icons.lock_outline,
@@ -633,6 +625,14 @@ class _HomeScreenState extends State<HomeScreen> {
                   title: 'Sessions',
                   subtitle: 'Devices signed in to your Matrix account',
                   onTap: () => _openSessions(context),
+                ),
+                const Divider(height: 1),
+                _buildMenuTile(
+                  context,
+                  icon: Icons.merge_type_outlined,
+                  title: 'Bridge identities',
+                  subtitle: 'Merge bridge users with your account',
+                  onTap: () => _openBridgeIdentities(context),
                 ),
                 const Divider(height: 1),
                 _buildMenuTile(
@@ -1225,6 +1225,12 @@ class _HomeScreenState extends State<HomeScreen> {
         displayName: latestEvent.senderName,
       );
       if (!isBridgeBot) {
+        final client = Get.find<AuthController>().client;
+        final alsoMe = Get.find<SettingsController>().state?.alsoMeUserIds ?? [];
+        if (latestEvent.senderId == client.userID ||
+            alsoMe.contains(latestEvent.senderId)) {
+          return text;
+        }
         final name = latestEvent.senderName?.isNotEmpty == true
             ? latestEvent.senderName!
             : _localpart(latestEvent.senderId);
@@ -1253,14 +1259,6 @@ class _HomeScreenState extends State<HomeScreen> {
         : withoutServer;
   }
 
-  String _menuNotificationsSubtitle() {
-    final settings = Get.find<SettingsController>().state;
-    if (settings == null) {
-      return 'Message alerts';
-    }
-    return settings.notificationsEnabled ? 'On' : 'Off';
-  }
-
   String _menuEncryptionSubtitle() {
     final settings = Get.find<SettingsController>().state;
     if (settings == null) {
@@ -1287,13 +1285,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  void _openNotificationSettings(BuildContext context) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => const NotificationSettingsScreen()),
-    );
-  }
-
   void _openEncryptionSettings(BuildContext context) {
     Navigator.push(
       context,
@@ -1305,6 +1296,13 @@ class _HomeScreenState extends State<HomeScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => const SessionsScreen()),
+    );
+  }
+
+  void _openBridgeIdentities(BuildContext context) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const BridgeIdentitiesScreen()),
     );
   }
 

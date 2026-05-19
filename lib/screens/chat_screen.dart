@@ -473,6 +473,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 : CrossFadeState.showFirst,
             duration: const Duration(milliseconds: 220),
           ),
+          _buildUnverifiedWarning(),
           if (_recordedAudioFile != null)
             _AudioPreviewPlayer(
               audioFile: _recordedAudioFile!,
@@ -546,6 +547,16 @@ class _ChatScreenState extends State<ChatScreen> {
                                     textCapitalization: TextCapitalization.sentences,
                                     textInputAction: TextInputAction.send,
                                     onSubmitted: (_) => _sendMessage(),
+                                    contentInsertionConfiguration: ContentInsertionConfiguration(
+                                      onContentInserted: _handleInsertedContent,
+                                      allowedMimeTypes: const [
+                                        'image/gif',
+                                        'image/png',
+                                        'image/jpeg',
+                                        'image/webp',
+                                        'image/jpg',
+                                      ],
+                                    ),
                                     contextMenuBuilder: (context, editableTextState) {
                                       final buttonItems = <ContextMenuButtonItem>[];
                                       for (final item in editableTextState.contextMenuButtonItems) {
@@ -619,6 +630,16 @@ class _ChatScreenState extends State<ChatScreen> {
                               textCapitalization: TextCapitalization.sentences,
                               textInputAction: TextInputAction.send,
                               onSubmitted: (_) => _sendMessage(),
+                              contentInsertionConfiguration: ContentInsertionConfiguration(
+                                onContentInserted: _handleInsertedContent,
+                                allowedMimeTypes: const [
+                                  'image/gif',
+                                  'image/png',
+                                  'image/jpeg',
+                                  'image/webp',
+                                  'image/jpg',
+                                ],
+                              ),
                               contextMenuBuilder: (context, editableTextState) {
                                 final buttonItems = <ContextMenuButtonItem>[];
                                 for (final item in editableTextState.contextMenuButtonItems) {
@@ -692,6 +713,41 @@ class _ChatScreenState extends State<ChatScreen> {
                 ],
               ],
             ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildUnverifiedWarning() {
+    final client = Get.find<AuthController>().client;
+    final userId = client.userID;
+    final deviceId = client.deviceID;
+    if (userId == null || deviceId == null) return const SizedBox.shrink();
+
+    final deviceKey = client.userDeviceKeys[userId]?.deviceKeys[deviceId];
+    final isVerified = deviceKey?.verified == true;
+    if (isVerified) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6, left: 4, right: 4),
+      child: Row(
+        children: [
+          Icon(
+            Icons.warning_amber_rounded,
+            size: 14,
+            color: Colors.orange.withValues(alpha: 0.7),
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              'Your device is unverified — others may see a warning on your messages',
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.orange.withValues(alpha: 0.7),
+                height: 1.3,
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -1318,6 +1374,43 @@ class _ChatScreenState extends State<ChatScreen> {
     } catch (error) {
       if (!mounted) return;
       Get.snackbar('Error', 'Paste failed: $error');
+    }
+  }
+
+  Future<void> _handleInsertedContent(KeyboardInsertedContent content) async {
+    try {
+      final bytes = content.data;
+      if (bytes == null || bytes.isEmpty) {
+        if (!mounted) return;
+        Get.snackbar('', 'No image data');
+        return;
+      }
+      final mime = content.mimeType;
+      final ext = _mimeToExt(mime);
+      final tempDir = await getTemporaryDirectory();
+      final path = '${tempDir.path}/keyboard_image_${DateTime.now().millisecondsSinceEpoch}.$ext';
+      final file = File(path);
+      await file.writeAsBytes(bytes);
+      final media = XFile(path, mimeType: mime);
+      setState(() => _pendingImages.add(media));
+    } catch (error) {
+      if (!mounted) return;
+      Get.snackbar('Error', 'Insert failed: $error');
+    }
+  }
+
+  String _mimeToExt(String mime) {
+    switch (mime) {
+      case 'image/gif':
+        return 'gif';
+      case 'image/webp':
+        return 'webp';
+      case 'image/jpeg':
+      case 'image/jpg':
+        return 'jpg';
+      case 'image/png':
+      default:
+        return 'png';
     }
   }
 

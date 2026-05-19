@@ -14,7 +14,7 @@ class SessionsScreen extends StatefulWidget {
 }
 
 class _SessionsScreenState extends State<SessionsScreen> {
-  final int _refreshToken = 0;
+  int _refreshToken = 0;
 
   @override
   Widget build(BuildContext context) {
@@ -224,9 +224,61 @@ class _SessionsScreenState extends State<SessionsScreen> {
               ],
             ),
           ),
+          if (!session.isCurrentDevice)
+            IconButton(
+              icon: Icon(Icons.logout, size: 20, color: cs.error.withValues(alpha: 0.7)),
+              onPressed: () => _confirmRemoveSession(session),
+              tooltip: 'Remove session',
+            ),
         ],
       ),
     );
+  }
+
+  Future<void> _confirmRemoveSession(DeviceSessionInfo session) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Remove session'),
+        content: Text(
+          'Remove "${session.displayName?.trim().isNotEmpty == true ? session.displayName!.trim() : session.deviceId}"? '
+          'This will sign that device out of your account.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: FilledButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.error),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      await Get.find<SettingsController>().deleteDeviceSession(session.deviceId);
+      if (!mounted) return;
+      setState(() => _refreshToken++);
+      Get.snackbar(
+        'Removed',
+        'Session removed successfully.',
+        snackPosition: SnackPosition.BOTTOM,
+        duration: const Duration(seconds: 2),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      Get.snackbar(
+        'Error',
+        error.toString(),
+        snackPosition: SnackPosition.BOTTOM,
+        duration: const Duration(seconds: 3),
+      );
+    }
   }
 
   Widget _sessionVerificationChip(

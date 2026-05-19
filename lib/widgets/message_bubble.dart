@@ -382,9 +382,9 @@ class MessageBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bubbleFill = _bubbleFill(context);
-    final showAvatar = !isMe && isLastInGroup;
-    final topSpacing = isFirstInGroup ? 12.0 : 3.0;
-    final bottomSpacing = isLastInGroup ? 4.0 : 0.0;
+    final showAvatar = !isMe && isFirstInGroup;
+    final topSpacing = isFirstInGroup ? 8.0 : 2.0;
+    final bottomSpacing = isLastInGroup ? 3.0 : 0.0;
 
     final readReceiptWidgets = _buildReadReceipts(context);
 
@@ -395,21 +395,17 @@ class MessageBubble extends StatelessWidget {
         crossAxisAlignment:
             isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
         children: [
-          Row(
-            mainAxisAlignment:
-                isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
-            crossAxisAlignment: CrossAxisAlignment.end,
+          Stack(
+            clipBehavior: Clip.none,
             children: [
-              if (!isMe) ...[
-                SizedBox(
-                  width: 30,
-                  child: Align(
-                    alignment: Alignment.bottomLeft,
-                    child: showAvatar ? _buildAvatar() : const SizedBox.shrink(),
-                  ),
-                ),
-                const SizedBox(width: 8),
-              ],
+              Row(
+                mainAxisAlignment:
+                    isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  if (!isMe) ...[
+                    const SizedBox(width: 36),
+                  ],
               Flexible(
                 child: ConstrainedBox(
                   constraints: BoxConstraints(
@@ -445,14 +441,22 @@ class MessageBubble extends StatelessWidget {
               ),
             ],
           ),
-          if (isMe && showReadReceipts && readReceiptWidgets != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 3, right: 2),
-              child: readReceiptWidgets,
+          if (showAvatar)
+            Positioned(
+              top: -4,
+              left: 14,
+              child: _buildAvatar(),
             ),
         ],
       ),
-    );
+      if (isMe && showReadReceipts && readReceiptWidgets != null)
+        Padding(
+          padding: const EdgeInsets.only(top: 3, right: 2),
+          child: readReceiptWidgets,
+        ),
+    ],
+  ),
+  );
   }
 
   Widget _buildAvatar() {
@@ -475,17 +479,17 @@ class MessageBubble extends StatelessWidget {
             'Authorization': 'Bearer ${client.accessToken}',
         },
         imageBuilder: (context, imageProvider) => CircleAvatar(
-          radius: 12,
+          radius: 16,
           backgroundColor: const Color(0xFFD8DEE8),
           backgroundImage: imageProvider,
         ),
         placeholder: (context, url) => CircleAvatar(
-          radius: 12,
+          radius: 16,
           backgroundColor: const Color(0xFFD8DEE8),
           child: Text(
             initial,
             style: const TextStyle(
-              fontSize: 11,
+              fontSize: 14,
               fontWeight: FontWeight.w700,
               color: Color(0xFF5D6A7C),
             ),
@@ -494,12 +498,12 @@ class MessageBubble extends StatelessWidget {
         errorWidget: (context, url, error) {
           markAvatarSourceBroken(event.senderAvatarUrl);
           return CircleAvatar(
-            radius: 12,
+            radius: 16,
             backgroundColor: const Color(0xFFD8DEE8),
             child: Text(
               initial,
               style: const TextStyle(
-                fontSize: 11,
+                fontSize: 14,
                 fontWeight: FontWeight.w700,
                 color: Color(0xFF5D6A7C),
               ),
@@ -510,12 +514,12 @@ class MessageBubble extends StatelessWidget {
     }
 
     return CircleAvatar(
-      radius: 12,
+      radius: 16,
       backgroundColor: const Color(0xFFD8DEE8),
       child: Text(
         initial,
         style: const TextStyle(
-          fontSize: 11,
+          fontSize: 14,
           fontWeight: FontWeight.w700,
           color: Color(0xFF5D6A7C),
         ),
@@ -668,6 +672,7 @@ class MessageBubble extends StatelessWidget {
                         reaction: emoji,
                       )
                   : null,
+              onLongPress: () => _showReactionsSheet(context, emoji),
               borderRadius: BorderRadius.circular(10),
               child: Container(
                 padding:
@@ -706,6 +711,30 @@ class MessageBubble extends StatelessWidget {
           );
         }).toList(),
       ),
+    );
+  }
+
+  void _showReactionsSheet(BuildContext context, String selectedEmoji) {
+    final client = Get.find<AuthController>().client;
+    final userId = client.userID;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final backgroundColor = isDark ? const Color(0xFF1C1C1E) : Colors.white;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: backgroundColor,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return _ReactionsSheet(
+          event: event,
+          selectedEmoji: selectedEmoji,
+          userId: userId,
+          client: client,
+          onAction: onAction,
+        );
+      },
     );
   }
 
@@ -2095,6 +2124,211 @@ class _AudioAttachmentBubbleState extends State<_AudioAttachmentBubble> {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Bottom sheet showing who reacted with which emoji.
+class _ReactionsSheet extends StatefulWidget {
+  final AppEvent event;
+  final String selectedEmoji;
+  final String? userId;
+  final Client client;
+  final void Function(MessageAction action, AppEvent event, {String? reaction})? onAction;
+
+  const _ReactionsSheet({
+    required this.event,
+    required this.selectedEmoji,
+    required this.userId,
+    required this.client,
+    this.onAction,
+  });
+
+  @override
+  State<_ReactionsSheet> createState() => _ReactionsSheetState();
+}
+
+class _ReactionsSheetState extends State<_ReactionsSheet> {
+  late String _filter;
+
+  @override
+  void initState() {
+    super.initState();
+    _filter = widget.selectedEmoji;
+  }
+
+  Map<String, List<ReactionSender>> get _visibleSenders {
+    if (_filter == 'ALL') return widget.event.reactionSenders;
+    final filtered = widget.event.reactionSenders[_filter];
+    return filtered == null ? {} : {_filter: filtered};
+  }
+
+  Widget _buildReactorRow(ReactionSender sender, String emoji) {
+    final isMe = sender.id == widget.userId;
+    final name = sender.name ?? sender.id.replaceAll('@', '');
+    final resolvedAvatar = sender.avatarUrl != null
+        ? resolveAvatarImageUrl(sender.avatarUrl!, widget.client, size: 48)
+        : null;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        children: [
+          CircleAvatar(
+            radius: 18,
+            backgroundColor: const Color(0xFFD8DEE8),
+            backgroundImage: resolvedAvatar != null
+                ? CachedNetworkImageProvider(resolvedAvatar)
+                : null,
+            child: resolvedAvatar == null
+                ? Text(
+                    name.isNotEmpty ? name[0].toUpperCase() : '?',
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF5D6A7C),
+                    ),
+                  )
+                : null,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  name,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                if (isMe)
+                  const Text(
+                    'Tap to remove',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          Text(emoji, style: const TextStyle(fontSize: 22)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTab(String label, String emoji, int count) {
+    final isSelected = _filter == emoji;
+    return GestureDetector(
+      onTap: () => setState(() => _filter = emoji),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        margin: const EdgeInsets.only(right: 8),
+        decoration: BoxDecoration(
+          color: isSelected ? Theme.of(context).colorScheme.primary : Colors.transparent,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (label.isNotEmpty)
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: isSelected ? Colors.white : Theme.of(context).colorScheme.onSurface,
+                ),
+              ),
+            if (label.isNotEmpty && emoji.isNotEmpty) const SizedBox(width: 4),
+            if (emoji.isNotEmpty)
+              Text(emoji, style: const TextStyle(fontSize: 14)),
+            if (count > 0) ...[
+              const SizedBox(width: 3),
+              Text(
+                '$count',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: isSelected ? Colors.white : Theme.of(context).colorScheme.onSurface,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final allCount = widget.event.reactions.values.fold(0, (a, b) => a + b);
+    final senders = _visibleSenders;
+
+    return SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox(height: 8),
+          Container(
+            width: 40,
+            height: 4,
+            decoration: BoxDecoration(
+              color: cs.onSurface.withValues(alpha: 0.2),
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Reactions',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          Flexible(
+            child: ListView.builder(
+              shrinkWrap: true,
+              itemCount: senders.length,
+              itemBuilder: (_, i) {
+                final emoji = senders.keys.elementAt(i);
+                final list = senders[emoji]!;
+                return Column(
+                  children: list.map((s) => _buildReactorRow(s, emoji)).toList(),
+                );
+              },
+            ),
+          ),
+          const Divider(height: 1),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: Row(
+              children: [
+                _buildTab('ALL', '', allCount),
+                ...widget.event.reactions.entries.map((e) => _buildTab('', e.key, e.value)),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

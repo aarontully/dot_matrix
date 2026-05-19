@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:get/get.dart';
 import 'package:matrix/encryption.dart';
@@ -154,8 +155,8 @@ class AuthController extends GetxController with StateMixin<String?> {
       await (_client.roomsLoading ?? Future.value());
       _setupVerificationListener();
       await _maybeRegisterPusher();
-
       change(userId, status: RxStatus.success());
+      await _maybePromptDeviceVerification();
     } catch (error) {
       if (_isInvalidTokenError(error)) {
         await _resetStoredSession();
@@ -208,6 +209,7 @@ class AuthController extends GetxController with StateMixin<String?> {
       clearBrokenAvatarSources();
       await _maybeRegisterPusher();
       change(loginResponse.userId, status: RxStatus.success());
+      await _maybePromptDeviceVerification();
     } catch (error) {
       change(null, status: RxStatus.error(error.toString()));
     }
@@ -257,6 +259,61 @@ class AuthController extends GetxController with StateMixin<String?> {
       }
     } catch (_) {
       // Best effort pusher registration.
+    }
+  }
+
+  Future<void> _maybePromptDeviceVerification() async {
+    try {
+      final encryption = _client.encryption;
+      if (encryption == null) return;
+
+      final userId = _client.userID;
+      if (userId == null) return;
+
+      await _client.updateUserDeviceKeys(additionalUsers: {userId});
+      await _client.userDeviceKeysLoading;
+
+      final ownKeys = _client.userDeviceKeys[userId];
+      final currentDeviceKey = ownKeys?.deviceKeys[_client.deviceID];
+      if (currentDeviceKey?.verified == true) return;
+
+      final otherKeys = ownKeys?.deviceKeys.values
+              .where((dk) => dk.deviceId != _client.deviceID)
+              .toList() ??
+          [];
+
+      if (otherKeys.isEmpty) return;
+
+      final hasVerified = await Get.dialog<bool>(
+        AlertDialog(
+          title: const Text('Verify this device'),
+          content: const Text(
+            'Another device is signed into your account. '
+            'Verify this session to access your encrypted message history.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Get.back(result: false),
+              child: const Text('Skip'),
+            ),
+            FilledButton(
+              onPressed: () => Get.back(result: true),
+              child: const Text('Verify'),
+            ),
+          ],
+        ),
+      );
+
+      if (hasVerified != true) return;
+
+      final request = await Get.find<SettingsController>()
+          .startDeviceVerification();
+      await Get.dialog(
+        barrierDismissible: false,
+        DeviceVerificationDialog(request: request),
+      );
+    } catch (_) {
+      // Best effort prompt.
     }
   }
 

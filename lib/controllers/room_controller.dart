@@ -6,6 +6,7 @@ import '../models/room_model.dart';
 import '../utils/bridge_detector.dart';
 import '../utils/matrix_event_display.dart';
 import 'auth_controller.dart';
+import 'settings_controller.dart';
 
 class RoomController extends GetxController with StateMixin<List<AppRoom>> {
   StreamSubscription? _syncSubscription;
@@ -225,12 +226,19 @@ class RoomController extends GetxController with StateMixin<List<AppRoom>> {
                         <Event>{};
                     final reactionCounts = <String, int>{};
                     final myReactionEventIds = <String, String>{};
+                    final reactionSenders = <String, List<ReactionSender>>{};
                     for (final r in reactionEvents) {
                       final relatesTo =
                           r.content['m.relates_to'] as Map<String, dynamic>?;
                       final key = relatesTo?['key'] as String?;
                       if (key != null && key.isNotEmpty) {
                         reactionCounts[key] = (reactionCounts[key] ?? 0) + 1;
+                        final sender = ReactionSender(
+                          id: r.senderId,
+                          name: r.senderFromMemoryOrFallback.calcDisplayname(),
+                          avatarUrl: r.senderFromMemoryOrFallback.avatarUrl,
+                        );
+                        reactionSenders.putIfAbsent(key, () => []).add(sender);
                         if (r.senderId == client.userID) {
                           myReactionEventIds[key] = r.eventId;
                         }
@@ -248,6 +256,7 @@ class RoomController extends GetxController with StateMixin<List<AppRoom>> {
                       rawEvent: e,
                       reactions: reactionCounts,
                       myReactions: myReactionEventIds,
+                      reactionSenders: reactionSenders,
                       isEdited: e.hasAggregatedEvents(timeline, RelationshipTypes.edit),
                     );
                   },
@@ -262,8 +271,11 @@ class RoomController extends GetxController with StateMixin<List<AppRoom>> {
             var bridgePlatform = BridgePlatform.unknown;
             try {
               final members = await room.requestParticipants();
+              final alsoMe =
+                  Get.find<SettingsController>().state?.alsoMeUserIds ?? [];
               final realMembers = members.where((m) {
                 if (m.id == client.userID) return false;
+                if (alsoMe.contains(m.id)) return false;
                 return !BridgeDetector.isBridgeBot(
                   m.id,
                   displayName: m.displayName,

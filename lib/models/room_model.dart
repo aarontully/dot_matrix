@@ -54,6 +54,14 @@ class AppRoom {
   }) : _unreadCount = unreadCount;
 }
 
+class ReactionSender {
+  final String id;
+  final String? name;
+  final Uri? avatarUrl;
+
+  const ReactionSender({required this.id, this.name, this.avatarUrl});
+}
+
 class AppEvent {
   final String senderId;
   final String? senderName;
@@ -66,6 +74,8 @@ class AppEvent {
   final Map<String, int> reactions;
   /// Map of reaction emoji to the current user's reaction eventId for toggling.
   final Map<String, String> myReactions;
+  /// Map of reaction emoji to list of sender info.
+  final Map<String, List<ReactionSender>> reactionSenders;
   /// Whether this message has been edited.
   final bool isEdited;
 
@@ -79,6 +89,7 @@ class AppEvent {
     required this.rawEvent,
     this.reactions = const {},
     this.myReactions = const {},
+    this.reactionSenders = const {},
     this.isEdited = false,
   });
 }

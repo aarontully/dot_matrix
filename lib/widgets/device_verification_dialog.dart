@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:matrix/encryption.dart';
 
@@ -12,20 +14,41 @@ class DeviceVerificationDialog extends StatefulWidget {
 }
 
 class _DeviceVerificationDialogState extends State<DeviceVerificationDialog> {
+  Timer? _timeoutTimer;
+  bool _timedOut = false;
+
   @override
   void initState() {
     super.initState();
     widget.request.onUpdate = _onUpdate;
+    _startTimeout();
   }
 
   @override
   void dispose() {
+    _timeoutTimer?.cancel();
     widget.request.onUpdate = null;
     super.dispose();
   }
 
+  void _startTimeout() {
+    _timeoutTimer?.cancel();
+    _timeoutTimer = Timer(const Duration(seconds: 60), () {
+      if (!mounted) return;
+      if (widget.request.isDone) return;
+      setState(() => _timedOut = true);
+    });
+  }
+
   void _onUpdate() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    setState(() {});
+    if (widget.request.isDone) {
+      _timeoutTimer?.cancel();
+      Future.delayed(const Duration(seconds: 2), () {
+        if (mounted) Navigator.of(context).pop();
+      });
+    }
   }
 
   Future<void> _acceptIncoming() async {
@@ -59,6 +82,12 @@ class _DeviceVerificationDialogState extends State<DeviceVerificationDialog> {
       await widget.request.cancel('m.user');
     } catch (_) {}
     if (mounted) Navigator.of(context).pop();
+  }
+
+  Future<void> _acceptChoice() async {
+    try {
+      await widget.request.acceptVerification();
+    } catch (_) {}
   }
 
   String _stateMessage(KeyVerificationState state) {
@@ -126,8 +155,24 @@ class _DeviceVerificationDialogState extends State<DeviceVerificationDialog> {
               ),
               const SizedBox(height: 16),
             ],
-            if (isDone && state != KeyVerificationState.done)
+            if (_timedOut && !isDone) ...[
+              const Icon(Icons.timer_off, color: Colors.orange),
+              const SizedBox(height: 8),
+              const Text(
+                'Timed out waiting for the other device.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.orange),
+              ),
+            ],
+            if (isDone && state != KeyVerificationState.done) ...[
               const Icon(Icons.error, color: Colors.red),
+              const SizedBox(height: 8),
+              Text(
+                widget.request.canceledReason ?? 'Verification failed.',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.red),
+              ),
+            ],
             if (state == KeyVerificationState.done)
               const Icon(Icons.check_circle, color: Colors.green),
           ],
@@ -143,6 +188,15 @@ class _DeviceVerificationDialogState extends State<DeviceVerificationDialog> {
             onPressed: _acceptIncoming,
             child: const Text('Accept'),
           ),
+        ] else if (state == KeyVerificationState.askChoice) ...[
+          TextButton(
+            onPressed: _cancel,
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: _acceptChoice,
+            child: const Text('Continue'),
+          ),
         ] else if (state == KeyVerificationState.askSas) ...[
           TextButton(
             onPressed: _rejectSas,
@@ -152,7 +206,7 @@ class _DeviceVerificationDialogState extends State<DeviceVerificationDialog> {
             onPressed: _acceptSas,
             child: const Text('They match'),
           ),
-        ] else if (isDone) ...[
+        ] else if (isDone || _timedOut) ...[
           FilledButton(
             onPressed: () => Navigator.of(context).pop(),
             child: const Text('Close'),

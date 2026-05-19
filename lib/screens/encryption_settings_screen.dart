@@ -19,16 +19,6 @@ class EncryptionSettingsScreen extends StatefulWidget {
 
 class _EncryptionSettingsScreenState extends State<EncryptionSettingsScreen> {
   final _encryptionRecoveryController = TextEditingController();
-  final _pushGatewayUrlController = TextEditingController();
-
-  @override
-  void initState() {
-    super.initState();
-    final settings = Get.find<SettingsController>().state;
-    if (settings?.pushGatewayUrl != null) {
-      _pushGatewayUrlController.text = settings!.pushGatewayUrl!;
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -128,46 +118,19 @@ class _EncryptionSettingsScreenState extends State<EncryptionSettingsScreen> {
             ),
             const SizedBox(height: 16),
             _buildSectionCard(
-              title: 'Push Notifications',
+              title: 'Message Encryption',
               subtitle:
-                  'Enter your Matrix push gateway URL to receive notifications when the app is closed.',
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  TextField(
-                    controller: _pushGatewayUrlController,
-                    autocorrect: false,
-                    enableSuggestions: false,
-                    keyboardType: TextInputType.url,
-                    textInputAction: TextInputAction.done,
-                    onSubmitted: (_) => _savePushGatewayUrl(),
-                    decoration: const InputDecoration(
-                      labelText: 'Push gateway URL',
-                      hintText:
-                          'https://your-push-gateway.example.com/_matrix/push/v1/notify',
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      onPressed: _savePushGatewayUrl,
-                      icon: const Icon(Icons.save_outlined),
-                      label: const Text('Save push gateway URL'),
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'This requires a Matrix push gateway (e.g. Sygnal or ntfy) that forwards homeserver events to Firebase Cloud Messaging.',
-                    style: TextStyle(
-                      fontSize: 13,
-                      height: 1.4,
-                      color: theme.colorScheme.onSurface.withValues(
-                        alpha: 0.72,
-                      ),
-                    ),
-                  ),
-                ],
+                  'End-to-end encryption protects your messages so only you and the recipient can read them.',
+              child: SwitchListTile.adaptive(
+                value: settings.encryptMessages,
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Encrypt messages'),
+                subtitle: const Text(
+                  'When enabled, new direct messages are sent with end-to-end encryption.',
+                ),
+                onChanged: (value) {
+                  Get.find<SettingsController>().setEncryptMessages(value);
+                },
               ),
             ),
             const SizedBox(height: 16),
@@ -419,31 +382,9 @@ class _EncryptionSettingsScreenState extends State<EncryptionSettingsScreen> {
     Get.snackbar('Error', error.toString());
   }
 
-  Future<void> _savePushGatewayUrl() async {
-    final url = _pushGatewayUrlController.text.trim();
-    try {
-      await Get.find<SettingsController>().setPushGatewayUrl(
-        url.isEmpty ? null : url,
-      );
-      if (!mounted) return;
-      Get.snackbar(
-        'Saved',
-        url.isEmpty
-            ? 'Push gateway URL cleared.'
-            : 'Push gateway URL saved. Pusher registered.',
-        snackPosition: SnackPosition.BOTTOM,
-        duration: const Duration(seconds: 2),
-      );
-    } catch (error) {
-      if (!mounted) return;
-      _showError(error);
-    }
-  }
-
   @override
   void dispose() {
     _encryptionRecoveryController.dispose();
-    _pushGatewayUrlController.dispose();
     super.dispose();
   }
 }

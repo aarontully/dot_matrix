@@ -23,7 +23,7 @@ extension AppAppearanceX on AppAppearance {
         return appearance;
       }
     }
-    return AppAppearance.light;
+    return AppAppearance.system;
   }
 
   static AppAppearance fromThemeMode(ThemeMode mode) {
@@ -68,11 +68,13 @@ class SettingsState {
     required this.secureBackupAvailable,
     required this.keyBackupEnabled,
     required this.encryptedHistoryReady,
+    required this.encryptMessages,
     this.avatarUrl,
     this.isSavingProfile = false,
     this.isUploadingAvatar = false,
     this.isRestoringEncryption = false,
     this.customPrimaryColor,
+    this.alsoMeUserIds = const [],
   });
 
   final String displayName;
@@ -91,10 +93,12 @@ class SettingsState {
   final bool secureBackupAvailable;
   final bool keyBackupEnabled;
   final bool encryptedHistoryReady;
+  final bool encryptMessages;
   final bool isSavingProfile;
   final bool isUploadingAvatar;
   final bool isRestoringEncryption;
   final Color? customPrimaryColor;
+  final List<String> alsoMeUserIds;
 
   String get initials {
     final source = displayName.trim().isNotEmpty ? displayName.trim() : userId;
@@ -128,11 +132,13 @@ class SettingsState {
     bool? secureBackupAvailable,
     bool? keyBackupEnabled,
     bool? encryptedHistoryReady,
+    bool? encryptMessages,
     bool? isSavingProfile,
     bool? isUploadingAvatar,
     bool? isRestoringEncryption,
     Color? customPrimaryColor,
     bool clearCustomPrimaryColor = false,
+    List<String>? alsoMeUserIds,
   }) {
     return SettingsState(
       displayName: displayName ?? this.displayName,
@@ -153,6 +159,7 @@ class SettingsState {
       keyBackupEnabled: keyBackupEnabled ?? this.keyBackupEnabled,
       encryptedHistoryReady:
           encryptedHistoryReady ?? this.encryptedHistoryReady,
+      encryptMessages: encryptMessages ?? this.encryptMessages,
       isSavingProfile: isSavingProfile ?? this.isSavingProfile,
       isUploadingAvatar: isUploadingAvatar ?? this.isUploadingAvatar,
       isRestoringEncryption:
@@ -160,6 +167,7 @@ class SettingsState {
       customPrimaryColor: clearCustomPrimaryColor
           ? null
           : customPrimaryColor ?? this.customPrimaryColor,
+      alsoMeUserIds: alsoMeUserIds ?? this.alsoMeUserIds,
     );
   }
 }

@@ -17,10 +17,12 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
   static const _boxName = 'dot_matrix_settings';
   static const _notificationsKey = 'notifications_enabled';
   static const _pushGatewayUrlKey = 'push_gateway_url';
+  static const _encryptMessagesKey = 'encrypt_messages';
   static const _appearanceKey = 'appearance';
   static const _chatSortOrderKey = 'chat_sort_order';
   static const _activeStatusKey = 'active_status_enabled';
   static const _customPrimaryColorKey = 'custom_primary_color';
+  static const _alsoMeUserIdsKey = 'also_me_user_ids';
 
   final ImagePicker _imagePicker = ImagePicker();
 
@@ -50,7 +52,9 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
     Get.changeThemeMode(appearance.themeMode);
     final notificationsEnabled = (box.get(_notificationsKey) as bool?) ?? true;
     final pushGatewayUrl = box.get(_pushGatewayUrlKey) as String?;
-
+    final encryptMessages = (box.get(_encryptMessagesKey) as bool?) ?? true;
+    final alsoMeRaw = box.get(_alsoMeUserIdsKey) as List<dynamic>?;
+    final alsoMeUserIds = alsoMeRaw?.cast<String>().toList() ?? const <String>[];
     if (auth.state == null || client.userID == null) {
       change(null, status: RxStatus.success());
       return;
@@ -106,6 +110,7 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
           ),
           notificationsEnabled: notificationsEnabled,
           pushGatewayUrl: pushGatewayUrl,
+          encryptMessages: encryptMessages,
           activeStatusEnabled:
               (box.get(_activeStatusKey) as bool?) ?? defaultActiveStatus,
           appearance: appearance,
@@ -115,6 +120,7 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
           keyBackupEnabled: keyBackupEnabled,
           encryptedHistoryReady: encryptedHistoryReady,
           customPrimaryColor: customPrimaryColor,
+          alsoMeUserIds: alsoMeUserIds,
         ),
         status: RxStatus.success(),
       );
@@ -181,6 +187,18 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
     );
   }
 
+  Future<void> setEncryptMessages(bool enabled) async {
+    final current = state;
+    if (current == null) return;
+
+    final box = await _openBox();
+    await box.put(_encryptMessagesKey, enabled);
+    change(
+      current.copyWith(encryptMessages: enabled),
+      status: RxStatus.success(),
+    );
+  }
+
   Future<void> setPushGatewayUrl(String? url) async {
     final current = state;
     if (current == null) return;
@@ -203,6 +221,40 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
     final auth = Get.find<AuthController>();
     if (auth.state != null && url != null && url.isNotEmpty) {
       await PushNotificationService().registerPusher(url);
+    }
+  }
+
+  Future<void> addAlsoMeUser(String userId) async {
+    final current = state;
+    if (current == null) return;
+
+    final trimmed = userId.trim();
+    if (trimmed.isEmpty) return;
+
+    final box = await _openBox();
+    final list = List<String>.from(current.alsoMeUserIds);
+    if (!list.contains(trimmed)) {
+      list.add(trimmed);
+      await box.put(_alsoMeUserIdsKey, list);
+      change(
+        current.copyWith(alsoMeUserIds: list),
+        status: RxStatus.success(),
+      );
+    }
+  }
+
+  Future<void> removeAlsoMeUser(String userId) async {
+    final current = state;
+    if (current == null) return;
+
+    final box = await _openBox();
+    final list = List<String>.from(current.alsoMeUserIds);
+    if (list.remove(userId)) {
+      await box.put(_alsoMeUserIdsKey, list);
+      change(
+        current.copyWith(alsoMeUserIds: list),
+        status: RxStatus.success(),
+      );
     }
   }
 
@@ -501,6 +553,15 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
     });
 
     return list;
+  }
+
+  Future<void> deleteDeviceSession(String deviceId) async {
+    final client = Get.find<AuthController>().client;
+    try {
+      await client.deleteDevice(deviceId);
+    } catch (e) {
+      throw Exception('Failed to remove session: $e');
+    }
   }
 
   /// Rotates the Matrix Secure Backup (4s key) passphrase using the Matrix SDK
