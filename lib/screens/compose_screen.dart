@@ -90,6 +90,7 @@ class _ComposeScreenState extends State<ComposeScreen> {
                         hintText: '@username:homeserver.org',
                         prefixIcon: Icon(Icons.alternate_email),
                       ),
+                      textCapitalization: TextCapitalization.sentences,
                       textInputAction: TextInputAction.done,
                       onSubmitted: (_) => _startChat(),
                     ),

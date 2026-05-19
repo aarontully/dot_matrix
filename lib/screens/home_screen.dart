@@ -13,6 +13,7 @@ import '../controllers/room_controller.dart';
 import '../controllers/settings_controller.dart';
 import '../theme/app_theme.dart';
 import '../utils/avatar_url_resolver.dart';
+import '../utils/bridge_detector.dart';
 import '../utils/matrix_event_display.dart';
 import '../widgets/dot_matrix_text.dart';
 import '../widgets/room_avatar_grid.dart';
@@ -287,22 +288,7 @@ class _HomeScreenState extends State<HomeScreen> {
       separatorBuilder: (_, _) => const SizedBox(height: 2),
       itemBuilder: (context, index) {
         final room = filteredRooms[index];
-        return Dismissible(
-          key: ValueKey(room.id),
-          direction: DismissDirection.endToStart,
-          confirmDismiss: (_) => _confirmLeaveRoom(context, room),
-          onDismissed: (_) {},
-          background: Container(
-            alignment: Alignment.centerRight,
-            padding: const EdgeInsets.only(right: 24),
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.error,
-              borderRadius: BorderRadius.circular(24),
-            ),
-            child: const Icon(Icons.archive_outlined, color: Colors.white),
-          ),
-          child: _buildChatItem(context, room),
-        );
+        return _buildChatItem(context, room);
       },
     );
   }
@@ -1234,10 +1220,16 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     if (room.isGroup && latestEvent != null) {
-      final name = latestEvent.senderName?.isNotEmpty == true
-          ? latestEvent.senderName!
-          : _localpart(latestEvent.senderId);
-      return '$name: $text';
+      final isBridgeBot = BridgeDetector.isBridgeBot(
+        latestEvent.senderId,
+        displayName: latestEvent.senderName,
+      );
+      if (!isBridgeBot) {
+        final name = latestEvent.senderName?.isNotEmpty == true
+            ? latestEvent.senderName!
+            : _localpart(latestEvent.senderId);
+        return '$name: $text';
+      }
     }
 
     return text;
@@ -1330,45 +1322,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Future<bool> _confirmLeaveRoom(BuildContext context, AppRoom appRoom) async {
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Leave chat?'),
-        content: Text(
-          'You will leave "${appRoom.displayname}". This removes it from your room list.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Leave'),
-          ),
-        ],
-      ),
-    );
-
-    if (result != true) return false;
-
-    try {
-      final client = Get.find<AuthController>().client;
-      final room = client.getRoomById(appRoom.id);
-      if (room != null) {
-        await room.leave();
-        await Get.find<RoomController>().refreshRooms();
-      }
-    } catch (error) {
-      if (context.mounted) {
-        Get.snackbar('Error', 'Could not leave room: $error');
-      }
-      return false;
-    }
-
-    return true;
-  }
 }
 
 class _SpaceFilterTile extends StatelessWidget {
@@ -1435,7 +1388,7 @@ class _ActivityItem {
   final _ActivityKind kind;
 
   Color get tint => switch (kind) {
-    _ActivityKind.textMessage => AppTheme.primaryBlue,
+    _ActivityKind.textMessage => AppTheme.defaultSeed,
     _ActivityKind.emote => const Color(0xFFE91E8C),
     _ActivityKind.image => const Color(0xFF8E44AD),
     _ActivityKind.video => const Color(0xFFC0392B),

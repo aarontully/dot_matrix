@@ -262,15 +262,21 @@ class RoomController extends GetxController with StateMixin<List<AppRoom>> {
             var bridgePlatform = BridgePlatform.unknown;
             try {
               final members = await room.requestParticipants();
-              memberCount = members.length;
-              final memberIds = members.map((m) => m.id).toList();
+              final realMembers = members.where((m) {
+                if (m.id == client.userID) return false;
+                return !BridgeDetector.isBridgeBot(
+                  m.id,
+                  displayName: m.displayName,
+                );
+              }).toList();
+              memberCount = realMembers.length + 1; // +1 for current user
+              final memberIds = realMembers.map((m) => m.id).toList();
               bridgePlatform = BridgeDetector.detectFromMembers(
                 memberIds,
                 client.userID ?? '',
               );
               if (room.avatar == null) {
-                for (final member in members) {
-                  if (member.id == client.userID) continue;
+                for (final member in realMembers) {
                   if (member.avatarUrl != null) {
                     memberAvatars.add(member.avatarUrl!);
                   }

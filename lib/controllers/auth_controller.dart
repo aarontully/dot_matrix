@@ -6,7 +6,9 @@ import 'package:matrix/encryption.dart';
 import 'package:matrix/matrix.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../services/push_notification_service.dart';
 import '../utils/avatar_url_resolver.dart';
+import 'settings_controller.dart';
 import '../widgets/device_verification_dialog.dart';
 
 class AuthController extends GetxController with StateMixin<String?> {
@@ -151,6 +153,7 @@ class AuthController extends GetxController with StateMixin<String?> {
       );
       await (_client.roomsLoading ?? Future.value());
       _setupVerificationListener();
+      await _maybeRegisterPusher();
 
       change(userId, status: RxStatus.success());
     } catch (error) {
@@ -203,6 +206,7 @@ class AuthController extends GetxController with StateMixin<String?> {
       );
 
       clearBrokenAvatarSources();
+      await _maybeRegisterPusher();
       change(loginResponse.userId, status: RxStatus.success());
     } catch (error) {
       change(null, status: RxStatus.error(error.toString()));
@@ -235,12 +239,25 @@ class AuthController extends GetxController with StateMixin<String?> {
       // Best effort logout. Local cleanup still matters more here.
     }
 
+    await PushNotificationService().unregisterPusher();
     await _clearStoredSession();
     clearBrokenAvatarSources();
     _verificationSubscription?.cancel();
     _verificationSubscription = null;
     _client = await _createClient();
     change(null, status: RxStatus.success());
+  }
+
+  Future<void> _maybeRegisterPusher() async {
+    try {
+      final settings = Get.find<SettingsController>().state;
+      final url = settings?.pushGatewayUrl;
+      if (url != null && url.isNotEmpty) {
+        await PushNotificationService().registerPusher(url);
+      }
+    } catch (_) {
+      // Best effort pusher registration.
+    }
   }
 
   Future<void> _persistSession({

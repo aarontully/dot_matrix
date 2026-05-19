@@ -151,7 +151,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
                 },
                 style: SegmentedButton.styleFrom(
                   backgroundColor: Colors.white,
-                  selectedForegroundColor: AppTheme.primaryBlue,
+                  selectedForegroundColor: AppTheme.defaultSeed,
                   selectedBackgroundColor: const Color(0xFFEAF3FF),
                 ),
               ),
@@ -190,10 +190,10 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
 
   Widget _buildColorPicker(SettingsState settings) {
     final presets = [
-      const Color(0xFF0084FF), // Default blue
+      const Color(0xFF4CAF50), // Default green
+      const Color(0xFF0084FF), // Blue
       const Color(0xFFE91E63), // Pink
       const Color(0xFF9C27B0), // Purple
-      const Color(0xFF4CAF50), // Green
       const Color(0xFFFF9800), // Orange
       const Color(0xFFF44336), // Red
       const Color(0xFF00BCD4), // Cyan

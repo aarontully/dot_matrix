@@ -82,4 +82,31 @@ class BridgeDetector {
     }
     return BridgePlatform.unknown;
   }
+
+  /// Returns true if the user ID or display name indicates a bridge bot.
+  /// Bridge bots are excluded from member lists, avatars, and previews.
+  static bool isBridgeBot(String userId, {String? displayName}) {
+    final idLower = userId.toLowerCase();
+    final nameLower = displayName?.toLowerCase() ?? '';
+    final text = '$idLower $nameLower';
+
+    // Must contain "bot" somewhere
+    if (!text.contains('bot')) return false;
+
+    // Must also contain a bridge platform keyword
+    final keywords = [
+      'discord', 'whatsapp', 'telegram', 'signal', 'slack',
+      'facebook', 'messenger', 'instagram', 'twitter', 'x_',
+      'googlechat', 'google_chat', 'google messages', 'linkedin',
+      'skype', 'wechat', 'weixin', 'line', 'imessage', 'sms',
+      'irc', 'email', 'mail', 'rss', 'feed', 'steam',
+      'playstation', 'psn', 'xbox', 'reddit', 'tiktok',
+      'teams', 'msteams', 'zoom', 'xmpp', 'jabber',
+      'mattermost', 'zulip', 'gitter', 'matrix', 'bridge',
+    ];
+    for (final kw in keywords) {
+      if (text.contains(kw)) return true;
+    }
+    return false;
+  }
 }

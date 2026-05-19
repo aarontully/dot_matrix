@@ -1234,6 +1234,11 @@ class _MediaAttachmentBubbleState extends State<_MediaAttachmentBubble> {
       final ev = widget.event.rawEvent;
 
       if (!ev.hasAttachment) {
+        if (ev.status == EventStatus.sending) {
+          // Still uploading; leave spinner running until didUpdateWidget
+          // re-triggers once the content is populated.
+          return;
+        }
         if (mounted) {
           setState(() {
             _error = 'Media unavailable';

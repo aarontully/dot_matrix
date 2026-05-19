@@ -11,10 +11,12 @@ import '../models/device_session_info.dart';
 import '../models/settings_state.dart';
 import 'auth_controller.dart';
 import 'room_controller.dart';
+import '../services/push_notification_service.dart';
 
 class SettingsController extends GetxController with StateMixin<SettingsState> {
   static const _boxName = 'dot_matrix_settings';
   static const _notificationsKey = 'notifications_enabled';
+  static const _pushGatewayUrlKey = 'push_gateway_url';
   static const _appearanceKey = 'appearance';
   static const _chatSortOrderKey = 'chat_sort_order';
   static const _activeStatusKey = 'active_status_enabled';
@@ -47,6 +49,7 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
         customColorValue != null ? Color(customColorValue) : null;
     Get.changeThemeMode(appearance.themeMode);
     final notificationsEnabled = (box.get(_notificationsKey) as bool?) ?? true;
+    final pushGatewayUrl = box.get(_pushGatewayUrlKey) as String?;
 
     if (auth.state == null || client.userID == null) {
       change(null, status: RxStatus.success());
@@ -102,6 +105,7 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
             'DotMatrix Device',
           ),
           notificationsEnabled: notificationsEnabled,
+          pushGatewayUrl: pushGatewayUrl,
           activeStatusEnabled:
               (box.get(_activeStatusKey) as bool?) ?? defaultActiveStatus,
           appearance: appearance,
@@ -175,6 +179,31 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
       current.copyWith(notificationsEnabled: enabled),
       status: RxStatus.success(),
     );
+  }
+
+  Future<void> setPushGatewayUrl(String? url) async {
+    final current = state;
+    if (current == null) return;
+
+    final box = await _openBox();
+    if (url == null || url.isEmpty) {
+      await box.delete(_pushGatewayUrlKey);
+      change(
+        current.copyWith(clearPushGatewayUrl: true),
+        status: RxStatus.success(),
+      );
+    } else {
+      await box.put(_pushGatewayUrlKey, url);
+      change(
+        current.copyWith(pushGatewayUrl: url),
+        status: RxStatus.success(),
+      );
+    }
+
+    final auth = Get.find<AuthController>();
+    if (auth.state != null && url != null && url.isNotEmpty) {
+      await PushNotificationService().registerPusher(url);
+    }
   }
 
   Future<void> setActiveStatus(bool enabled) async {

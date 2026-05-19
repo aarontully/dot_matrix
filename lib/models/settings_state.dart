@@ -60,6 +60,7 @@ class SettingsState {
     required this.deviceId,
     required this.deviceName,
     required this.notificationsEnabled,
+    this.pushGatewayUrl,
     required this.activeStatusEnabled,
     required this.appearance,
     required this.chatSortOrder,
@@ -82,6 +83,7 @@ class SettingsState {
   final String deviceId;
   final String deviceName;
   final bool notificationsEnabled;
+  final String? pushGatewayUrl;
   final bool activeStatusEnabled;
   final AppAppearance appearance;
   final ChatSortOrder chatSortOrder;
@@ -117,6 +119,8 @@ class SettingsState {
     String? deviceId,
     String? deviceName,
     bool? notificationsEnabled,
+    String? pushGatewayUrl,
+    bool clearPushGatewayUrl = false,
     bool? activeStatusEnabled,
     AppAppearance? appearance,
     ChatSortOrder? chatSortOrder,
@@ -139,6 +143,7 @@ class SettingsState {
       deviceId: deviceId ?? this.deviceId,
       deviceName: deviceName ?? this.deviceName,
       notificationsEnabled: notificationsEnabled ?? this.notificationsEnabled,
+      pushGatewayUrl: clearPushGatewayUrl ? null : pushGatewayUrl ?? this.pushGatewayUrl,
       activeStatusEnabled: activeStatusEnabled ?? this.activeStatusEnabled,
       appearance: appearance ?? this.appearance,
       chatSortOrder: chatSortOrder ?? this.chatSortOrder,

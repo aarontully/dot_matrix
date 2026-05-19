@@ -10,6 +10,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:matrix/matrix.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:pasteboard/pasteboard.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_sound/flutter_sound.dart';
 import 'package:just_audio/just_audio.dart' as ja;
@@ -23,6 +24,7 @@ import '../widgets/bridge_icon.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/room_avatar_grid.dart';
 import 'encryption_settings_screen.dart';
+import 'room_details_screen.dart';
 
 class ChatScreen extends StatefulWidget {
   final AppRoom room;
@@ -43,14 +45,17 @@ class _ScheduledMessage {
 
 class _ChatScreenState extends State<ChatScreen> {
   final _messageController = TextEditingController();
+  final _messageFocusNode = FocusNode();
   final _scrollController = ScrollController();
   final _audioRecorder = FlutterSoundRecorder();
   final _imagePicker = ImagePicker();
   bool _isTyping = false;
   bool _isAttachmentMenuOpen = false;
+  bool _isMessageFieldFocused = false;
   bool _isRecording = false;
   bool _isLoadingHistory = false;
   bool _showScrollToBottom = false;
+  final List<XFile> _pendingImages = [];
   File? _recordedAudioFile;
   AppEvent? _replyingToEvent;
   AppEvent? _editingEvent;
@@ -65,6 +70,15 @@ class _ChatScreenState extends State<ChatScreen> {
       final isTyping = _messageController.text.trim().isNotEmpty;
       if (isTyping != _isTyping) {
         setState(() => _isTyping = isTyping);
+      }
+    });
+    _messageFocusNode.addListener(() {
+      final focused = _messageFocusNode.hasFocus;
+      if (focused && _isAttachmentMenuOpen) {
+        setState(() => _isAttachmentMenuOpen = false);
+      }
+      if (focused != _isMessageFieldFocused) {
+        setState(() => _isMessageFieldFocused = focused);
       }
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -205,17 +219,19 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ],
         ),
-        // TODO: Implement calling & video calls (WebRTC + Matrix signaling).
-        // actions: [
-        //   IconButton(
-        //     icon: Icon(Icons.phone, color: theme.colorScheme.secondary),
-        //     onPressed: () {},
-        //   ),
-        //   IconButton(
-        //     icon: Icon(Icons.videocam, color: theme.colorScheme.secondary),
-        //     onPressed: () {},
-        //   ),
-        // ],
+        actions: [
+          IconButton(
+            icon: Icon(Icons.info_outline, color: theme.colorScheme.secondary),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => RoomDetailsScreen(room: widget.room),
+                ),
+              );
+            },
+          ),
+        ],
       ),
       body: Stack(
         children: [
@@ -340,39 +356,18 @@ class _ChatScreenState extends State<ChatScreen> {
                                   _buildDateHeader(event.originServerTs, theme),
                                 Container(
                                   key: key,
-                                  child: Dismissible(
-                                    key: ValueKey('swipe-${event.rawEvent.eventId}'),
-                                    direction: event.isMe
-                                        ? DismissDirection.endToStart
-                                        : DismissDirection.startToEnd,
-                                    confirmDismiss: (_) async {
-                                      HapticFeedback.mediumImpact();
-                                      _handleMessageAction(MessageAction.reply, event);
-                                      return false;
-                                    },
-                                    background: Container(
-                                      alignment: event.isMe
-                                          ? Alignment.centerRight
-                                          : Alignment.centerLeft,
-                                      padding: const EdgeInsets.symmetric(horizontal: 20),
-                                      child: Icon(
-                                        Icons.reply,
-                                        color: theme.colorScheme.primary,
-                                      ),
-                                    ),
-                                    child: MessageBubble(
-                                      event: event,
-                                      isMe: event.isMe,
-                                      isMetaAi: false,
-                                      isFirstInGroup: isFirstInGroup,
-                                      isLastInGroup: isLastInGroup,
-                                      showReadReceipts: event.rawEvent.eventId == lastReadOutgoingEventId,
-                                      replyToEvent: replyTarget,
-                                      onReplyTap: replyTarget != null
-                                          ? (id) => _scrollToEvent(id, displayedMessages)
-                                          : null,
-                                      onAction: _handleMessageAction,
-                                    ),
+                                  child: MessageBubble(
+                                    event: event,
+                                    isMe: event.isMe,
+                                    isMetaAi: false,
+                                    isFirstInGroup: isFirstInGroup,
+                                    isLastInGroup: isLastInGroup,
+                                    showReadReceipts: event.rawEvent.eventId == lastReadOutgoingEventId,
+                                    replyToEvent: replyTarget,
+                                    onReplyTap: replyTarget != null
+                                        ? (id) => _scrollToEvent(id, displayedMessages)
+                                        : null,
+                                    onAction: _handleMessageAction,
                                   ),
                                 ),
                               ],
@@ -496,20 +491,22 @@ class _ChatScreenState extends State<ChatScreen> {
                     () => _isAttachmentMenuOpen = !_isAttachmentMenuOpen,
                   ),
                 ),
-                const SizedBox(width: 8),
-                _buildCircleButton(
-                  icon: Icons.camera_alt_outlined,
-                  bg: cs.secondaryContainer,
-                  fg: cs.onSecondaryContainer,
-                  onTap: _takePhoto,
-                ),
-                const SizedBox(width: 8),
-                _buildCircleButton(
-                  icon: Icons.photo_outlined,
-                  bg: cs.secondaryContainer,
-                  fg: cs.onSecondaryContainer,
-                  onTap: _pickGalleryImage,
-                ),
+                if (!_isMessageFieldFocused) ...[
+                  const SizedBox(width: 8),
+                  _buildCircleButton(
+                    icon: Icons.camera_alt_outlined,
+                    bg: cs.secondaryContainer,
+                    fg: cs.onSecondaryContainer,
+                    onTap: _takePhoto,
+                  ),
+                  const SizedBox(width: 8),
+                  _buildCircleButton(
+                    icon: Icons.photo_outlined,
+                    bg: cs.secondaryContainer,
+                    fg: cs.onSecondaryContainer,
+                    onTap: _pickGalleryImage,
+                  ),
+                ],
                 const SizedBox(width: 10),
                 Expanded(
                   child: _replyingToEvent != null || _editingEvent != null
@@ -536,79 +533,151 @@ class _ChatScreenState extends State<ChatScreen> {
                                   bottom: Radius.circular(20),
                                 ),
                               ),
-                              child: TextField(
-                                controller: _messageController,
-                                minLines: 1,
-                                maxLines: 4,
-                                textInputAction: TextInputAction.send,
-                                onSubmitted: (_) => _sendMessage(),
-                                decoration: InputDecoration(
-                                  hintText: 'Message...',
-                                  hintStyle: TextStyle(
-                                    color: cs.onSurface.withValues(alpha: 0.5),
-                                  ),
-                                  isDense: true,
-                                  contentPadding: const EdgeInsets.symmetric(
-                                    horizontal: 14,
-                                    vertical: 12,
-                                  ),
-                                  suffixIcon: IconButton(
-                                    icon: Icon(
-                                      Icons.sentiment_satisfied_outlined,
-                                      color: cs.onSurface.withValues(alpha: 0.6),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  if (_pendingImages.isNotEmpty)
+                                    _buildImagePreviews(cs),
+                                  TextField(
+                                    controller: _messageController,
+                                    focusNode: _messageFocusNode,
+                                    minLines: 1,
+                                    maxLines: 4,
+                                    textCapitalization: TextCapitalization.sentences,
+                                    textInputAction: TextInputAction.send,
+                                    onSubmitted: (_) => _sendMessage(),
+                                    contextMenuBuilder: (context, editableTextState) {
+                                      final buttonItems = <ContextMenuButtonItem>[];
+                                      for (final item in editableTextState.contextMenuButtonItems) {
+                                        if (item.label == 'Paste') {
+                                          buttonItems.add(
+                                            ContextMenuButtonItem(
+                                              onPressed: () async {
+                                                final imageBytes = await Pasteboard.image;
+                                                if (imageBytes != null && imageBytes.isNotEmpty) {
+                                                  _pasteFromClipboard();
+                                                } else {
+                                                  editableTextState.pasteText(SelectionChangedCause.toolbar);
+                                                }
+                                                editableTextState.hideToolbar();
+                                              },
+                                              label: 'Paste',
+                                            ),
+                                          );
+                                        } else {
+                                          buttonItems.add(item);
+                                        }
+                                      }
+                                      return AdaptiveTextSelectionToolbar.buttonItems(
+                                        anchors: editableTextState.contextMenuAnchors,
+                                        buttonItems: buttonItems,
+                                      );
+                                    },
+                                    decoration: InputDecoration(
+                                      hintText: 'Message...',
+                                      hintStyle: TextStyle(
+                                        color: cs.onSurface.withValues(alpha: 0.5),
+                                      ),
+                                      isDense: true,
+                                      contentPadding: const EdgeInsets.symmetric(
+                                        horizontal: 14,
+                                        vertical: 12,
+                                      ),
+                                      suffixIcon: IconButton(
+                                        icon: Icon(
+                                          Icons.sentiment_satisfied_outlined,
+                                          color: cs.onSurface.withValues(alpha: 0.6),
+                                        ),
+                                        onPressed: _showEmojiPickerSheet,
+                                      ),
+                                      border: InputBorder.none,
+                                      focusedBorder: InputBorder.none,
+                                      enabledBorder: InputBorder.none,
                                     ),
-                                    onPressed: _showEmojiPickerSheet,
                                   ),
-                                  border: InputBorder.none,
-                                  focusedBorder: InputBorder.none,
-                                  enabledBorder: InputBorder.none,
+                              ],
+                            ),
+                          ),
+                        ],
+                      )
+                    : Container(
+                        clipBehavior: Clip.antiAlias,
+                        decoration: BoxDecoration(
+                          color: cs.surfaceContainerHighest,
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (_pendingImages.isNotEmpty)
+                              _buildImagePreviews(cs),
+                            TextField(
+                              controller: _messageController,
+                              focusNode: _messageFocusNode,
+                              minLines: 1,
+                              maxLines: 4,
+                              textCapitalization: TextCapitalization.sentences,
+                              textInputAction: TextInputAction.send,
+                              onSubmitted: (_) => _sendMessage(),
+                              contextMenuBuilder: (context, editableTextState) {
+                                final buttonItems = <ContextMenuButtonItem>[];
+                                for (final item in editableTextState.contextMenuButtonItems) {
+                                  if (item.label == 'Paste') {
+                                    buttonItems.add(
+                                      ContextMenuButtonItem(
+                                        onPressed: () async {
+                                          final imageBytes = await Pasteboard.image;
+                                          if (imageBytes != null && imageBytes.isNotEmpty) {
+                                            _pasteFromClipboard();
+                                          } else {
+                                            editableTextState.pasteText(SelectionChangedCause.toolbar);
+                                          }
+                                          editableTextState.hideToolbar();
+                                        },
+                                        label: 'Paste',
+                                      ),
+                                    );
+                                  } else {
+                                    buttonItems.add(item);
+                                  }
+                                }
+                                return AdaptiveTextSelectionToolbar.buttonItems(
+                                  anchors: editableTextState.contextMenuAnchors,
+                                  buttonItems: buttonItems,
+                                );
+                              },
+                              decoration: InputDecoration(
+                                hintText: 'Message...',
+                                hintStyle: TextStyle(
+                                  color: cs.onSurface.withValues(alpha: 0.5),
                                 ),
+                                isDense: true,
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 14,
+                                  vertical: 12,
+                                ),
+                                suffixIcon: IconButton(
+                                  icon: Icon(
+                                    Icons.sentiment_satisfied_outlined,
+                                    color: cs.onSurface.withValues(alpha: 0.6),
+                                  ),
+                                  onPressed: _showEmojiPickerSheet,
+                                ),
+                                border: InputBorder.none,
+                                focusedBorder: InputBorder.none,
+                                enabledBorder: InputBorder.none,
                               ),
                             ),
                           ],
-                        )
-                      : Container(
-                          clipBehavior: Clip.antiAlias,
-                          decoration: BoxDecoration(
-                            color: cs.surfaceContainerHighest,
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          child: TextField(
-                            controller: _messageController,
-                            minLines: 1,
-                            maxLines: 4,
-                            textInputAction: TextInputAction.send,
-                            onSubmitted: (_) => _sendMessage(),
-                            decoration: InputDecoration(
-                              hintText: 'Message...',
-                              hintStyle: TextStyle(
-                                color: cs.onSurface.withValues(alpha: 0.5),
-                              ),
-                              isDense: true,
-                              contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 14,
-                                vertical: 12,
-                              ),
-                              suffixIcon: IconButton(
-                                icon: Icon(
-                                  Icons.sentiment_satisfied_outlined,
-                                  color: cs.onSurface.withValues(alpha: 0.6),
-                                ),
-                                onPressed: _showEmojiPickerSheet,
-                              ),
-                              border: InputBorder.none,
-                              focusedBorder: InputBorder.none,
-                              enabledBorder: InputBorder.none,
-                            ),
-                          ),
                         ),
+                      ),
                 ),
-                if (_isTyping) ...[
+                if (_isTyping || _pendingImages.isNotEmpty) ...[
                   const SizedBox(width: 6),
                   _buildCircleButton(
                     icon: Icons.send,
-                    bg: const Color(0xFF00C875),
-                    fg: Colors.white,
+                    bg: cs.primary,
+                    fg: cs.onPrimary,
                     onTap: _sendMessage,
                     onLongPress: _scheduleSend,
                   ),
@@ -646,6 +715,22 @@ class _ChatScreenState extends State<ChatScreen> {
             color: _isRecording ? Colors.red : const Color(0xFFE85D75),
             onTap: _toggleVoiceRecording,
           ),
+          if (_isMessageFieldFocused) ...[
+            const SizedBox(width: 8),
+            _buildAttachmentChip(
+              icon: Icons.camera_alt_outlined,
+              label: 'Camera',
+              color: const Color(0xFF8BC34A),
+              onTap: _takePhoto,
+            ),
+            const SizedBox(width: 8),
+            _buildAttachmentChip(
+              icon: Icons.photo_outlined,
+              label: 'Gallery',
+              color: const Color(0xFF03A9F4),
+              onTap: _pickGalleryImage,
+            ),
+          ],
         ],
       ),
     );
@@ -712,9 +797,12 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _sendMessage() async {
     final text = _messageController.text.trim();
-    if (text.isEmpty) return;
+    final images = List<XFile>.from(_pendingImages);
+    if (text.isEmpty && images.isEmpty) return;
+
     HapticFeedback.lightImpact();
     _messageController.clear();
+    setState(() => _pendingImages.clear());
     final replyTo = _replyingToEvent;
     final editing = _editingEvent;
     setState(() {
@@ -730,12 +818,19 @@ class _ChatScreenState extends State<ChatScreen> {
         Get.snackbar('Error', 'Room not found');
         return;
       }
-      if (editing != null) {
+      if (editing != null && text.isNotEmpty) {
         await room.sendTextEvent(text, editEventId: editing.rawEvent.eventId);
-      } else if (replyTo != null) {
+      } else if (replyTo != null && text.isNotEmpty) {
         await room.sendTextEvent(text, inReplyTo: replyTo.rawEvent);
-      } else {
+      } else if (text.isNotEmpty) {
         await room.sendTextEvent(text);
+      }
+      for (final media in images) {
+        if (_isVideoFile(media)) {
+          await _sendVideoFile(File(media.path), mimeType: media.mimeType);
+        } else {
+          await _sendImageFile(File(media.path), mimeType: media.mimeType);
+        }
       }
     } catch (error) {
       if (!mounted) return;
@@ -773,7 +868,6 @@ class _ChatScreenState extends State<ChatScreen> {
       case MessageAction.copy:
         HapticFeedback.lightImpact();
         Clipboard.setData(ClipboardData(text: event.body));
-        Get.snackbar('', 'Copied', snackPosition: SnackPosition.BOTTOM, duration: const Duration(seconds: 1));
         break;
       case MessageAction.forward:
         _showForwardDialog(event);
@@ -1196,12 +1290,34 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _pickGalleryImage() async {
     if (!await requestPhotosPermission(context)) return;
     try {
-      final image = await _imagePicker.pickImage(source: ImageSource.gallery);
-      if (image == null) return;
-      await _sendImageFile(File(image.path), mimeType: image.mimeType);
+      final media = await _imagePicker.pickMultipleMedia();
+      if (media.isEmpty) return;
+      setState(() => _pendingImages.addAll(media));
     } catch (error) {
       if (!mounted) return;
       Get.snackbar('Error', 'Gallery error: $error');
+    }
+  }
+
+  Future<void> _pasteFromClipboard() async {
+    try {
+      final imageBytes = await Pasteboard.image;
+      if (imageBytes == null || imageBytes.isEmpty) {
+        if (!mounted) return;
+        Get.snackbar('', 'No image in clipboard');
+        return;
+      }
+      final tempDir = await getTemporaryDirectory();
+      final path = '${tempDir.path}/clipboard_image_${DateTime.now().millisecondsSinceEpoch}.png';
+      final file = File(path);
+      await file.writeAsBytes(imageBytes);
+      final media = XFile(path, mimeType: 'image/png');
+      setState(() => _pendingImages.add(media));
+      if (!mounted) return;
+      Get.snackbar('', 'Image pasted');
+    } catch (error) {
+      if (!mounted) return;
+      Get.snackbar('Error', 'Paste failed: $error');
     }
   }
 
@@ -1218,7 +1334,7 @@ class _ChatScreenState extends State<ChatScreen> {
         Get.snackbar('Error', 'Image file is empty');
         return;
       }
-      final bytes = await file.readAsBytes();
+      final bytes = Uint8List.fromList(await file.readAsBytes());
       final client = Get.find<AuthController>().client;
       final room = client.getRoomById(widget.room.id);
       if (room == null) {
@@ -1231,14 +1347,113 @@ class _ChatScreenState extends State<ChatScreen> {
         name: file.path.split('/').last,
         mimeType: mimeType,
       );
+      final isGif = mimeType?.toLowerCase().contains('gif') ?? false;
       await room.sendFileEvent(
         matrixFile,
-        shrinkImageMaxDimension: 1600,
+        shrinkImageMaxDimension: isGif ? null : 1600,
       );
     } catch (error) {
       if (!mounted) return;
       Get.snackbar('Error', 'Image send failed: $error');
     }
+  }
+
+  Future<void> _sendVideoFile(File file, {String? mimeType}) async {
+    try {
+      if (!await file.exists()) {
+        if (!mounted) return;
+        Get.snackbar('Error', 'Video file not found');
+        return;
+      }
+      final fileSize = await file.length();
+      if (fileSize == 0) {
+        if (!mounted) return;
+        Get.snackbar('Error', 'Video file is empty');
+        return;
+      }
+      final bytes = Uint8List.fromList(await file.readAsBytes());
+      final client = Get.find<AuthController>().client;
+      final room = client.getRoomById(widget.room.id);
+      if (room == null) {
+        if (!mounted) return;
+        Get.snackbar('Error', 'Room not found');
+        return;
+      }
+      final matrixFile = MatrixFile(
+        bytes: bytes,
+        name: file.path.split('/').last,
+      );
+      await room.sendFileEvent(matrixFile);
+    } catch (error) {
+      if (!mounted) return;
+      Get.snackbar('Error', 'Video send failed: $error');
+    }
+  }
+
+  Widget _buildImagePreviews(ColorScheme cs) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: List.generate(_pendingImages.length, (index) {
+          final file = _pendingImages[index];
+          final isVideo = _isVideoFile(file);
+          return Stack(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: Image.file(
+                  File(file.path),
+                  width: 60,
+                  height: 60,
+                  fit: BoxFit.cover,
+                ),
+              ),
+              if (isVideo)
+                const Positioned.fill(
+                  child: Center(
+                    child: Icon(
+                      Icons.play_circle_outline,
+                      color: Colors.white,
+                      size: 24,
+                    ),
+                  ),
+                ),
+              Positioned(
+                top: 2,
+                right: 2,
+                child: GestureDetector(
+                  onTap: () => setState(
+                    () => _pendingImages.removeAt(index),
+                  ),
+                  child: Container(
+                    decoration: const BoxDecoration(
+                      color: Colors.black54,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.close,
+                      size: 12,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          );
+        }),
+      ),
+    );
+  }
+
+  bool _isVideoFile(XFile file) {
+    final mime = file.mimeType?.toLowerCase() ?? '';
+    if (mime.startsWith('video/')) return true;
+    final parts = file.path.toLowerCase().split('.');
+    final ext = parts.length > 1 ? parts.last : '';
+    return ['mp4', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'webm', 'm4v', '3gp', '3gpp']
+        .contains(ext);
   }
 
   Future<void> _pickAndSendFile() async {
@@ -1410,6 +1625,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void dispose() {
     _messageController.dispose();
+    _messageFocusNode.dispose();
     _scrollController.dispose();
     _audioRecorder.closeRecorder();
     _scheduleTimer?.cancel();

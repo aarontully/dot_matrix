@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 class AppTheme {
-  static const Color primaryBlue = Color(0xFF0084FF);
+  static const Color defaultSeed = Color(0xFF4CAF50);
   static const Color messageGray = Color(0xFFE4E6EB);
   static const Color scaffoldBackground = Colors.white;
   static const Color settingsBackground = Color(0xFFF1F5FB);
@@ -9,7 +9,7 @@ class AppTheme {
   static const Color darkSurface = Color(0xFF1A1E25);
 
   static ThemeData lightTheme({Color? seedColor}) {
-    final seed = seedColor ?? primaryBlue;
+    final seed = seedColor ?? defaultSeed;
     return ThemeData(
       useMaterial3: true,
       colorScheme: ColorScheme.fromSeed(
@@ -66,10 +66,8 @@ class AppTheme {
   }
 
   static ThemeData darkTheme({Color? seedColor}) {
-    final seed = seedColor ?? primaryBlue;
-    final darkPrimary = seed == primaryBlue
-        ? const Color(0xFF5AA7FF)
-        : HSLColor.fromColor(seed).withLightness(0.65).toColor();
+    final seed = seedColor ?? defaultSeed;
+    final darkPrimary = HSLColor.fromColor(seed).withLightness(0.65).toColor();
     return ThemeData(
       useMaterial3: true,
       brightness: Brightness.dark,

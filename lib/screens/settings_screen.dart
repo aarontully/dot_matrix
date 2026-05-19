@@ -190,7 +190,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           style: const TextStyle(
                             fontSize: 26,
                             fontWeight: FontWeight.w700,
-                            color: AppTheme.primaryBlue,
+                            color: AppTheme.defaultSeed,
                           ),
                         )
                       : null,
@@ -253,7 +253,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _buildStatusPill(
                 'Profile only',
                 subtlePanel,
-                AppTheme.primaryBlue,
+                AppTheme.defaultSeed,
               ),
             ],
           ),

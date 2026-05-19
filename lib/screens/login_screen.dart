@@ -68,7 +68,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                       child: const Icon(
                         Icons.forum_outlined,
-                        color: AppTheme.primaryBlue,
+                        color: AppTheme.defaultSeed,
                         size: 28,
                       ),
                     ),
