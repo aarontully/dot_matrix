@@ -112,11 +112,19 @@ class RoomController extends GetxController with StateMixin<List<AppRoom>> {
     return timeline;
   }
 
-  Future<void> requestRoomHistory(String roomId) async {
+  bool canRequestRoomHistory(String roomId) {
     final timeline = _timelines[roomId];
-    if (timeline == null) return;
+    return timeline?.canRequestHistory ?? false;
+  }
+
+  Future<void> requestRoomHistory(
+    String roomId, {
+    int historyCount = 40,
+  }) async {
+    final timeline = _timelines[roomId];
+    if (timeline == null || !timeline.canRequestHistory) return;
     try {
-      await timeline.requestHistory();
+      await timeline.requestHistory(historyCount: historyCount);
     } catch (e) {
       debugPrint('History request failed: $e');
     }
@@ -151,6 +159,134 @@ class RoomController extends GetxController with StateMixin<List<AppRoom>> {
       n = 1;
     }
     return n < 0 ? 0 : n;
+  }
+
+  String? _attachmentLogicalKey(Event event) {
+    final candidates = <String?>[
+      event.content['filename'] as String?,
+      event.content['body'] as String?,
+      event.content['name'] as String?,
+    ];
+
+    final waitingBody = (event.content['body'] as String?) ?? event.body;
+    final waitingMatch = RegExp(
+      r'^(?:Waiting for attachment|Failed to transfer attachment)\s+(.+)$',
+      caseSensitive: false,
+    ).firstMatch(waitingBody);
+    if (waitingMatch != null) {
+      final key = waitingMatch.group(1)?.trim().toLowerCase();
+      if (key != null && key.isNotEmpty) return key;
+    }
+
+    for (final candidate in candidates) {
+      if (candidate == null) continue;
+      final cleaned = candidate.trim().toLowerCase();
+      if (cleaned.isEmpty) continue;
+      final stemMatch = RegExp(
+        r'^(.+?)(?:\.[a-z0-9]{1,5})?$',
+      ).firstMatch(cleaned);
+      final stem = stemMatch?.group(1)?.trim();
+      if (stem != null && stem.isNotEmpty) return stem;
+    }
+
+    return null;
+  }
+
+  bool _hasRenderableMedia(Event event) {
+    final type = event.messageType;
+    if (type == MessageTypes.Image ||
+        type == MessageTypes.Video ||
+        type == MessageTypes.Sticker) {
+      return true;
+    }
+    if (event.content['url'] is String || event.content['file'] is Map) {
+      return true;
+    }
+    final info = event.content['info'];
+    if (info is Map) {
+      final mime = (info['mimetype'] as String?)?.toLowerCase() ?? '';
+      if (mime.startsWith('image/') || mime.startsWith('video/')) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool _isProvisionalGMessagesMedia(Event event) {
+    final body = ((event.content['body'] as String?) ?? event.body).trim();
+    final hasDebugData =
+        event.content['fi.mau.gmessages.raw_debug_data'] is String;
+    final isWaiting =
+        body.startsWith('Waiting for attachment ') ||
+        body.startsWith('Failed to transfer attachment ');
+    return event.messageType == MessageTypes.Notice &&
+        (hasDebugData || isWaiting) &&
+        !_hasRenderableMedia(event);
+  }
+
+  Event? _resolveBetterBridgeMediaEvent(
+    Event event,
+    Timeline timeline,
+    List<Event> allTimelineEvents,
+  ) {
+    if (!_isProvisionalGMessagesMedia(event)) return null;
+    final key = _attachmentLogicalKey(event);
+    if (key == null) return null;
+
+    Event? best;
+    for (final candidate in allTimelineEvents) {
+      if (candidate.senderId != event.senderId) continue;
+      final displayCandidate = candidate.getDisplayEvent(timeline);
+      if (!_hasRenderableMedia(displayCandidate)) continue;
+
+      final candidateKeys = <String?>{
+        _attachmentLogicalKey(candidate),
+        _attachmentLogicalKey(displayCandidate),
+      };
+      if (!candidateKeys.contains(key)) continue;
+
+      if (best == null ||
+          displayCandidate.originServerTs.isAfter(best.originServerTs)) {
+        best = displayCandidate;
+      }
+    }
+
+    return best;
+  }
+
+  List<AppEvent> _collapseBridgeMediaPlaceholders(List<AppEvent> events) {
+    final bestBySenderAndKey = <String, AppEvent>{};
+
+    for (final event in events) {
+      final key = _attachmentLogicalKey(event.displayEvent);
+      if (key == null) continue;
+      final compoundKey = '${event.senderId}::$key';
+      final existing = bestBySenderAndKey[compoundKey];
+      if (existing == null) {
+        bestBySenderAndKey[compoundKey] = event;
+        continue;
+      }
+
+      final existingRenderable = _hasRenderableMedia(existing.displayEvent);
+      final currentRenderable = _hasRenderableMedia(event.displayEvent);
+      if (!existingRenderable && currentRenderable) {
+        bestBySenderAndKey[compoundKey] = event;
+      } else if (existingRenderable == currentRenderable &&
+          event.originServerTs.isAfter(existing.originServerTs)) {
+        bestBySenderAndKey[compoundKey] = event;
+      }
+    }
+
+    return events.where((event) {
+      if (!_isProvisionalGMessagesMedia(event.displayEvent)) return true;
+      final key = _attachmentLogicalKey(event.displayEvent);
+      if (key == null) return true;
+      final compoundKey = '${event.senderId}::$key';
+      final best = bestBySenderAndKey[compoundKey];
+      if (best == null) return true;
+      return identical(best, event) ||
+          best.rawEvent.eventId == event.rawEvent.eventId;
+    }).toList();
   }
 
   Future<void> _loadRoomsInternal() async {
@@ -199,12 +335,10 @@ class RoomController extends GetxController with StateMixin<List<AppRoom>> {
       }
 
       final roomFutures = client.rooms
-          .where(
-            (room) =>
-                room.membership == Membership.join && !room.isSpace,
-          )
+          .where((room) => room.membership == Membership.join && !room.isSpace)
           .map((room) async {
             final timeline = await _timelineFor(room);
+            final allTimelineEvents = List<Event>.from(timeline.events);
             if (client.encryptionEnabled) {
               timeline.requestKeys(
                 tryOnlineBackup: true,
@@ -212,18 +346,18 @@ class RoomController extends GetxController with StateMixin<List<AppRoom>> {
               );
             }
 
-            final messages = timeline.events
-                .where(
-                  (e) =>
-                      (e.type == EventTypes.Message ||
-                          e.type == EventTypes.Encrypted ||
-                          e.type == EventTypes.Sticker) &&
-                      e.relationshipType != RelationshipTypes.edit,
-                )
-                .map(
-                  (e) {
-                    final reactionEvents = timeline
-                            .aggregatedEvents[e.eventId]?['m.annotation'] ??
+            final messages = _collapseBridgeMediaPlaceholders(
+              timeline.events
+                  .where(
+                    (e) =>
+                        (e.type == EventTypes.Message ||
+                            e.type == EventTypes.Encrypted ||
+                            e.type == EventTypes.Sticker) &&
+                        e.relationshipType != RelationshipTypes.edit,
+                  )
+                  .map((e) {
+                    final reactionEvents =
+                        timeline.aggregatedEvents[e.eventId]?['m.annotation'] ??
                         <Event>{};
                     final reactionCounts = <String, int>{};
                     final myReactionEventIds = <String, String>{};
@@ -245,24 +379,34 @@ class RoomController extends GetxController with StateMixin<List<AppRoom>> {
                         }
                       }
                     }
+                    final displayEvent =
+                        _resolveBetterBridgeMediaEvent(
+                          e,
+                          timeline,
+                          allTimelineEvents,
+                        ) ??
+                        e.getDisplayEvent(timeline);
                     return AppEvent(
                       senderId: e.senderId,
-                      senderName:
-                          e.senderFromMemoryOrFallback.calcDisplayname(),
-                      senderAvatarUrl:
-                          e.senderFromMemoryOrFallback.avatarUrl,
-                      body: matrixEventDisplayText(e, timeline: timeline),
+                      senderName: e.senderFromMemoryOrFallback
+                          .calcDisplayname(),
+                      senderAvatarUrl: e.senderFromMemoryOrFallback.avatarUrl,
+                      body: matrixEventDisplayText(displayEvent),
                       originServerTs: e.originServerTs,
                       isMe: e.senderId == client.userID,
                       rawEvent: e,
+                      displayEvent: displayEvent,
                       reactions: reactionCounts,
                       myReactions: myReactionEventIds,
                       reactionSenders: reactionSenders,
-                      isEdited: e.hasAggregatedEvents(timeline, RelationshipTypes.edit),
+                      isEdited: e.hasAggregatedEvents(
+                        timeline,
+                        RelationshipTypes.edit,
+                      ),
                     );
-                  },
-                )
-                .toList();
+                  })
+                  .toList(),
+            );
 
             final unread = _unreadBadgeCount(room);
 
@@ -313,10 +457,14 @@ class RoomController extends GetxController with StateMixin<List<AppRoom>> {
               final targetId = relatesTo?['event_id'] as String?;
               if (emoji == null || targetId == null) continue;
               String targetBody = 'a message';
-              final targetEvent = timeline.events
-                  .firstWhereOrNull((e) => e.eventId == targetId);
+              final targetEvent = timeline.events.firstWhereOrNull(
+                (e) => e.eventId == targetId,
+              );
               if (targetEvent != null) {
-                targetBody = matrixEventDisplayText(targetEvent, timeline: timeline);
+                targetBody = matrixEventDisplayText(
+                  targetEvent,
+                  timeline: timeline,
+                );
               }
               final activity = AppReactionActivity(
                 senderId: ev.senderId,
@@ -326,7 +474,9 @@ class RoomController extends GetxController with StateMixin<List<AppRoom>> {
                 timestamp: ev.originServerTs,
               );
               if (latestReactionActivity == null ||
-                  activity.timestamp.isAfter(latestReactionActivity.timestamp)) {
+                  activity.timestamp.isAfter(
+                    latestReactionActivity.timestamp,
+                  )) {
                 latestReactionActivity = activity;
               }
             }
@@ -368,10 +518,7 @@ class RoomController extends GetxController with StateMixin<List<AppRoom>> {
     if (auth.state == null) return [];
     return auth.client.rooms
         .where((r) => r.membership == Membership.join && r.isSpace)
-        .map((r) => {
-              'id': r.id,
-              'name': r.getLocalizedDisplayname(),
-            })
+        .map((r) => {'id': r.id, 'name': r.getLocalizedDisplayname()})
         .toList();
   }
 }

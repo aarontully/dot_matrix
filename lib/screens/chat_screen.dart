@@ -18,8 +18,9 @@ import 'package:just_audio/just_audio.dart' as ja;
 import '../controllers/auth_controller.dart';
 import '../controllers/room_controller.dart';
 import '../models/room_model.dart';
-import '../utils/permissions.dart';
 import '../utils/bridge_detector.dart';
+import '../utils/permissions.dart';
+import '../utils/video_thumbnail_helper.dart';
 import '../widgets/bridge_icon.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/room_avatar_grid.dart';
@@ -44,6 +45,9 @@ class _ScheduledMessage {
 }
 
 class _ChatScreenState extends State<ChatScreen> {
+  static const double _historyPrefetchThreshold = 600;
+  static const int _historyBatchSize = 40;
+
   final _messageController = TextEditingController();
   final _messageFocusNode = FocusNode();
   final _scrollController = ScrollController();
@@ -83,6 +87,7 @@ class _ChatScreenState extends State<ChatScreen> {
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _markRoomAsRead();
+      _scheduleHistoryPrefetchCheck();
     });
     _audioRecorder.openRecorder();
     _scheduleTimer = Timer.periodic(
@@ -94,11 +99,7 @@ class _ChatScreenState extends State<ChatScreen> {
       if (show != _showScrollToBottom) {
         setState(() => _showScrollToBottom = show);
       }
-      if (_scrollController.position.pixels >=
-              _scrollController.position.maxScrollExtent - 200 &&
-          !_isLoadingHistory) {
-        _loadMoreHistory();
-      }
+      _maybeLoadMoreHistory();
     });
   }
 
@@ -134,14 +135,47 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _loadMoreHistory() async {
+    if (_isLoadingHistory) return;
+    final roomController = Get.find<RoomController>();
+    if (!roomController.canRequestRoomHistory(widget.room.id)) return;
+
     setState(() => _isLoadingHistory = true);
     try {
-      await Get.find<RoomController>().requestRoomHistory(widget.room.id);
+      await roomController.requestRoomHistory(
+        widget.room.id,
+        historyCount: _historyBatchSize,
+      );
     } catch (e) {
       debugPrint('History load failed: $e');
     } finally {
-      if (mounted) setState(() => _isLoadingHistory = false);
+      if (mounted) {
+        setState(() => _isLoadingHistory = false);
+        _scheduleHistoryPrefetchCheck();
+      }
     }
+  }
+
+  bool _isNearHistoryEdge([ScrollMetrics? metrics]) {
+    final activeMetrics =
+        metrics ??
+        (_scrollController.hasClients ? _scrollController.position : null);
+    if (activeMetrics == null) return false;
+    final triggerOffset =
+        activeMetrics.maxScrollExtent - _historyPrefetchThreshold;
+    return activeMetrics.pixels >= (triggerOffset < 0 ? 0 : triggerOffset);
+  }
+
+  void _maybeLoadMoreHistory([ScrollMetrics? metrics]) {
+    if (_isLoadingHistory) return;
+    if (!_isNearHistoryEdge(metrics)) return;
+    _loadMoreHistory();
+  }
+
+  void _scheduleHistoryPrefetchCheck() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _maybeLoadMoreHistory();
+    });
   }
 
   String? _latestVisibleMessageEventId() {
@@ -149,8 +183,7 @@ class _ChatScreenState extends State<ChatScreen> {
     AppEvent? newest;
     for (final m in widget.room.messages) {
       if (m.rawEvent.status == EventStatus.sending) continue;
-      if (newest == null ||
-          m.originServerTs.isAfter(newest.originServerTs)) {
+      if (newest == null || m.originServerTs.isAfter(newest.originServerTs)) {
         newest = m;
       }
     }
@@ -209,7 +242,8 @@ class _ChatScreenState extends State<ChatScreen> {
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
-                    if (widget.room.bridgePlatform != BridgePlatform.unknown) ...[
+                    if (widget.room.bridgePlatform !=
+                        BridgePlatform.unknown) ...[
                       const SizedBox(width: 6),
                       BridgeIcon(platform: widget.room.bridgePlatform),
                     ],
@@ -253,139 +287,169 @@ class _ChatScreenState extends State<ChatScreen> {
             child: Column(
               children: [
                 GetBuilder<RoomController>(
-              builder: (roomCtrl) {
-                final liveRoom = _findLiveRoom();
-                final messages = liveRoom?.messages ?? widget.room.messages;
-                final displayedMessages = List<AppEvent>.from(messages)
-                  ..sort((a, b) => b.originServerTs.compareTo(a.originServerTs));
-                final isWaitingForKey = messages.any(
-                  (event) => event.body == 'Waiting for room key...',
-                );
+                  builder: (roomCtrl) {
+                    final liveRoom = _findLiveRoom();
+                    final messages = liveRoom?.messages ?? widget.room.messages;
+                    final displayedMessages = List<AppEvent>.from(messages)
+                      ..sort(
+                        (a, b) => b.originServerTs.compareTo(a.originServerTs),
+                      );
+                    final isWaitingForKey = messages.any(
+                      (event) => event.body == 'Waiting for room key...',
+                    );
 
-                final auth = Get.find<AuthController>();
-                final ownUserId = auth.client.userID;
-                String? lastReadOutgoingEventId;
-                for (final event in displayedMessages) {
-                  if (event.isMe) {
-                    final hasOtherReaders = event.rawEvent.receipts
-                        .any((r) => r.user.id != ownUserId);
-                    if (hasOtherReaders) {
-                      lastReadOutgoingEventId = event.rawEvent.eventId;
-                      break;
+                    final auth = Get.find<AuthController>();
+                    final ownUserId = auth.client.userID;
+                    String? lastReadOutgoingEventId;
+                    for (final event in displayedMessages) {
+                      if (event.isMe) {
+                        final hasOtherReaders = event.rawEvent.receipts.any(
+                          (r) => r.user.id != ownUserId,
+                        );
+                        if (hasOtherReaders) {
+                          lastReadOutgoingEventId = event.rawEvent.eventId;
+                          break;
+                        }
+                      }
                     }
-                  }
-                }
 
-                return Expanded(
-                  child: Column(
-                    children: [
-                      if (isWaitingForKey) _buildRecoveryBanner(theme),
-                      Expanded(
-                        child: RefreshIndicator(
-                          onRefresh: _loadMoreHistory,
-                          child: NotificationListener<ScrollUpdateNotification>(
-                            onNotification: (notification) {
-                              if (notification.dragDetails != null) {
-                                FocusManager.instance.primaryFocus?.unfocus();
-                              }
-                              return false;
-                            },
-                            child: ListView.builder(
-                            controller: _scrollController,
-                            reverse: true,
-                            padding: const EdgeInsets.fromLTRB(12, 18, 12, 20),
-                            itemCount: displayedMessages.length +
-                                (_isLoadingHistory ? 1 : 0),
-                            itemBuilder: (context, index) {
-                              if (_isLoadingHistory &&
-                                  index == displayedMessages.length) {
-                                return const Padding(
-                                  padding: EdgeInsets.symmetric(vertical: 12),
-                                  child: Center(
-                                    child: SizedBox(
-                                      width: 20,
-                                      height: 20,
-                                      child: DotMatrixLoader(size: 20, dotSize: 3),
-                                    ),
-                                  ),
-                                );
-                              }
-                              final event = displayedMessages[index];
-                            final olderMessage =
-                                index < displayedMessages.length - 1
-                                    ? displayedMessages[index + 1]
-                                    : null;
-                            final newerMessage = index > 0
-                                ? displayedMessages[index - 1]
-                                : null;
-
-                            final isFirstInGroup =
-                                olderMessage == null ||
-                                !_isSameSender(event, olderMessage);
-                            final isLastInGroup =
-                                newerMessage == null ||
-                                !_isSameSender(event, newerMessage);
-
-                            // Resolve reply-to event for display
-                            AppEvent? replyTarget;
-                            if (event.rawEvent.relationshipType ==
-                                RelationshipTypes.reply) {
-                              final replyId = event.rawEvent.relationshipEventId;
-                              if (replyId != null) {
-                                replyTarget = displayedMessages.firstWhereOrNull(
-                                  (e) => e.rawEvent.eventId == replyId,
-                                );
-                              }
-                            }
-
-                            final key = _messageKeys.putIfAbsent(
-                              event.rawEvent.eventId,
-                              () => GlobalKey(),
-                            );
-
-                            final showDateHeader = index > 0 &&
-                                !_isSameDay(
-                                  event.originServerTs,
-                                  displayedMessages[index - 1].originServerTs,
-                                );
-
-                            return Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                if (showDateHeader)
-                                  _buildDateHeader(event.originServerTs, theme),
-                                Container(
-                                  key: key,
-                                  child: MessageBubble(
-                                    event: event,
-                                    isMe: event.isMe,
-                                    isMetaAi: false,
-                                    isFirstInGroup: isFirstInGroup,
-                                    isLastInGroup: isLastInGroup,
-                                    showReadReceipts: event.rawEvent.eventId == lastReadOutgoingEventId,
-                                    replyToEvent: replyTarget,
-                                    onReplyTap: replyTarget != null
-                                        ? (id) => _scrollToEvent(id, displayedMessages)
-                                        : null,
-                                    onAction: _handleMessageAction,
-                                  ),
+                    return Expanded(
+                      child: Column(
+                        children: [
+                          if (isWaitingForKey) _buildRecoveryBanner(theme),
+                          Expanded(
+                            child: NotificationListener<ScrollNotification>(
+                              onNotification: (notification) {
+                                if (notification is ScrollUpdateNotification &&
+                                    notification.dragDetails != null) {
+                                  FocusManager.instance.primaryFocus?.unfocus();
+                                }
+                                if (notification is ScrollEndNotification ||
+                                    notification is OverscrollNotification) {
+                                  _maybeLoadMoreHistory(notification.metrics);
+                                }
+                                return false;
+                              },
+                              child: ListView.builder(
+                                controller: _scrollController,
+                                physics: const ClampingScrollPhysics(),
+                                reverse: true,
+                                padding: const EdgeInsets.fromLTRB(
+                                  12,
+                                  18,
+                                  12,
+                                  20,
                                 ),
-                              ],
-                            );
-                          },
-                        ),
-                        ),
+                                itemCount:
+                                    displayedMessages.length +
+                                    (_isLoadingHistory ? 1 : 0),
+                                itemBuilder: (context, index) {
+                                  if (_isLoadingHistory &&
+                                      index == displayedMessages.length) {
+                                    return const Padding(
+                                      padding: EdgeInsets.symmetric(
+                                        vertical: 12,
+                                      ),
+                                      child: Center(
+                                        child: SizedBox(
+                                          width: 20,
+                                          height: 20,
+                                          child: DotMatrixLoader(
+                                            size: 20,
+                                            dotSize: 3,
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                  }
+                                  final event = displayedMessages[index];
+                                  final olderMessage =
+                                      index < displayedMessages.length - 1
+                                      ? displayedMessages[index + 1]
+                                      : null;
+                                  final newerMessage = index > 0
+                                      ? displayedMessages[index - 1]
+                                      : null;
+
+                                  final isFirstInGroup =
+                                      olderMessage == null ||
+                                      !_isSameSender(event, olderMessage);
+                                  final isLastInGroup =
+                                      newerMessage == null ||
+                                      !_isSameSender(event, newerMessage);
+
+                                  // Resolve reply-to event for display
+                                  AppEvent? replyTarget;
+                                  if (event.rawEvent.relationshipType ==
+                                      RelationshipTypes.reply) {
+                                    final replyId =
+                                        event.rawEvent.relationshipEventId;
+                                    if (replyId != null) {
+                                      replyTarget = displayedMessages
+                                          .firstWhereOrNull(
+                                            (e) =>
+                                                e.rawEvent.eventId == replyId,
+                                          );
+                                    }
+                                  }
+
+                                  final key = _messageKeys.putIfAbsent(
+                                    event.rawEvent.eventId,
+                                    () => GlobalKey(),
+                                  );
+
+                                  final showDateHeader =
+                                      index > 0 &&
+                                      !_isSameDay(
+                                        event.originServerTs,
+                                        displayedMessages[index - 1]
+                                            .originServerTs,
+                                      );
+
+                                  return Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      if (showDateHeader)
+                                        _buildDateHeader(
+                                          event.originServerTs,
+                                          theme,
+                                        ),
+                                      Container(
+                                        key: key,
+                                        child: MessageBubble(
+                                          event: event,
+                                          isMe: event.isMe,
+                                          isMetaAi: false,
+                                          isFirstInGroup: isFirstInGroup,
+                                          isLastInGroup: isLastInGroup,
+                                          showReadReceipts:
+                                              event.rawEvent.eventId ==
+                                              lastReadOutgoingEventId,
+                                          replyToEvent: replyTarget,
+                                          onReplyTap: replyTarget != null
+                                              ? (id) => _scrollToEvent(
+                                                  id,
+                                                  displayedMessages,
+                                                )
+                                              : null,
+                                          onAction: _handleMessageAction,
+                                        ),
+                                      ),
+                                    ],
+                                  );
+                                },
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                    ),
-                    ],
-                  ),
-                );
-              },
+                    );
+                  },
+                ),
+                _buildMessageInput(theme),
+              ],
             ),
-            _buildMessageInput(theme),
-          ],
-        ),
-      ),
+          ),
           if (_showScrollToBottom)
             Positioned(
               right: 16,
@@ -544,10 +608,115 @@ class _ChatScreenState extends State<ChatScreen> {
                                     focusNode: _messageFocusNode,
                                     minLines: 1,
                                     maxLines: 4,
-                                    textCapitalization: TextCapitalization.sentences,
+                                    textCapitalization:
+                                        TextCapitalization.sentences,
                                     textInputAction: TextInputAction.send,
                                     onSubmitted: (_) => _sendMessage(),
-                                    contentInsertionConfiguration: ContentInsertionConfiguration(
+                                    contentInsertionConfiguration:
+                                        ContentInsertionConfiguration(
+                                          onContentInserted:
+                                              _handleInsertedContent,
+                                          allowedMimeTypes: const [
+                                            'image/gif',
+                                            'image/png',
+                                            'image/jpeg',
+                                            'image/webp',
+                                            'image/jpg',
+                                          ],
+                                        ),
+                                    contextMenuBuilder:
+                                        (context, editableTextState) {
+                                          final buttonItems =
+                                              <ContextMenuButtonItem>[];
+                                          for (final item
+                                              in editableTextState
+                                                  .contextMenuButtonItems) {
+                                            if (item.label == 'Paste') {
+                                              buttonItems.add(
+                                                ContextMenuButtonItem(
+                                                  onPressed: () async {
+                                                    final imageBytes =
+                                                        await Pasteboard.image;
+                                                    if (imageBytes != null &&
+                                                        imageBytes.isNotEmpty) {
+                                                      _pasteFromClipboard();
+                                                    } else {
+                                                      editableTextState
+                                                          .pasteText(
+                                                            SelectionChangedCause
+                                                                .toolbar,
+                                                          );
+                                                    }
+                                                    editableTextState
+                                                        .hideToolbar();
+                                                  },
+                                                  label: 'Paste',
+                                                ),
+                                              );
+                                            } else {
+                                              buttonItems.add(item);
+                                            }
+                                          }
+                                          return AdaptiveTextSelectionToolbar.buttonItems(
+                                            anchors: editableTextState
+                                                .contextMenuAnchors,
+                                            buttonItems: buttonItems,
+                                          );
+                                        },
+                                    decoration: InputDecoration(
+                                      hintText: 'Message...',
+                                      hintStyle: TextStyle(
+                                        color: cs.onSurface.withValues(
+                                          alpha: 0.5,
+                                        ),
+                                      ),
+                                      isDense: true,
+                                      contentPadding:
+                                          const EdgeInsets.symmetric(
+                                            horizontal: 14,
+                                            vertical: 12,
+                                          ),
+                                      suffixIcon: IconButton(
+                                        icon: Icon(
+                                          Icons.sentiment_satisfied_outlined,
+                                          color: cs.onSurface.withValues(
+                                            alpha: 0.6,
+                                          ),
+                                        ),
+                                        onPressed: _showEmojiPickerSheet,
+                                      ),
+                                      border: InputBorder.none,
+                                      focusedBorder: InputBorder.none,
+                                      enabledBorder: InputBorder.none,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        )
+                      : Container(
+                          clipBehavior: Clip.antiAlias,
+                          decoration: BoxDecoration(
+                            color: cs.surfaceContainerHighest,
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (_pendingImages.isNotEmpty)
+                                _buildImagePreviews(cs),
+                              TextField(
+                                controller: _messageController,
+                                focusNode: _messageFocusNode,
+                                minLines: 1,
+                                maxLines: 4,
+                                textCapitalization:
+                                    TextCapitalization.sentences,
+                                textInputAction: TextInputAction.send,
+                                onSubmitted: (_) => _sendMessage(),
+                                contentInsertionConfiguration:
+                                    ContentInsertionConfiguration(
                                       onContentInserted: _handleInsertedContent,
                                       allowedMimeTypes: const [
                                         'image/gif',
@@ -557,141 +726,67 @@ class _ChatScreenState extends State<ChatScreen> {
                                         'image/jpg',
                                       ],
                                     ),
-                                    contextMenuBuilder: (context, editableTextState) {
-                                      final buttonItems = <ContextMenuButtonItem>[];
-                                      for (final item in editableTextState.contextMenuButtonItems) {
-                                        if (item.label == 'Paste') {
-                                          buttonItems.add(
-                                            ContextMenuButtonItem(
-                                              onPressed: () async {
-                                                final imageBytes = await Pasteboard.image;
-                                                if (imageBytes != null && imageBytes.isNotEmpty) {
-                                                  _pasteFromClipboard();
-                                                } else {
-                                                  editableTextState.pasteText(SelectionChangedCause.toolbar);
-                                                }
-                                                editableTextState.hideToolbar();
-                                              },
-                                              label: 'Paste',
-                                            ),
-                                          );
-                                        } else {
-                                          buttonItems.add(item);
-                                        }
-                                      }
-                                      return AdaptiveTextSelectionToolbar.buttonItems(
-                                        anchors: editableTextState.contextMenuAnchors,
-                                        buttonItems: buttonItems,
-                                      );
-                                    },
-                                    decoration: InputDecoration(
-                                      hintText: 'Message...',
-                                      hintStyle: TextStyle(
-                                        color: cs.onSurface.withValues(alpha: 0.5),
-                                      ),
-                                      isDense: true,
-                                      contentPadding: const EdgeInsets.symmetric(
-                                        horizontal: 14,
-                                        vertical: 12,
-                                      ),
-                                      suffixIcon: IconButton(
-                                        icon: Icon(
-                                          Icons.sentiment_satisfied_outlined,
-                                          color: cs.onSurface.withValues(alpha: 0.6),
+                                contextMenuBuilder: (context, editableTextState) {
+                                  final buttonItems = <ContextMenuButtonItem>[];
+                                  for (final item
+                                      in editableTextState
+                                          .contextMenuButtonItems) {
+                                    if (item.label == 'Paste') {
+                                      buttonItems.add(
+                                        ContextMenuButtonItem(
+                                          onPressed: () async {
+                                            final imageBytes =
+                                                await Pasteboard.image;
+                                            if (imageBytes != null &&
+                                                imageBytes.isNotEmpty) {
+                                              _pasteFromClipboard();
+                                            } else {
+                                              editableTextState.pasteText(
+                                                SelectionChangedCause.toolbar,
+                                              );
+                                            }
+                                            editableTextState.hideToolbar();
+                                          },
+                                          label: 'Paste',
                                         ),
-                                        onPressed: _showEmojiPickerSheet,
-                                      ),
-                                      border: InputBorder.none,
-                                      focusedBorder: InputBorder.none,
-                                      enabledBorder: InputBorder.none,
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      )
-                    : Container(
-                        clipBehavior: Clip.antiAlias,
-                        decoration: BoxDecoration(
-                          color: cs.surfaceContainerHighest,
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            if (_pendingImages.isNotEmpty)
-                              _buildImagePreviews(cs),
-                            TextField(
-                              controller: _messageController,
-                              focusNode: _messageFocusNode,
-                              minLines: 1,
-                              maxLines: 4,
-                              textCapitalization: TextCapitalization.sentences,
-                              textInputAction: TextInputAction.send,
-                              onSubmitted: (_) => _sendMessage(),
-                              contentInsertionConfiguration: ContentInsertionConfiguration(
-                                onContentInserted: _handleInsertedContent,
-                                allowedMimeTypes: const [
-                                  'image/gif',
-                                  'image/png',
-                                  'image/jpeg',
-                                  'image/webp',
-                                  'image/jpg',
-                                ],
-                              ),
-                              contextMenuBuilder: (context, editableTextState) {
-                                final buttonItems = <ContextMenuButtonItem>[];
-                                for (final item in editableTextState.contextMenuButtonItems) {
-                                  if (item.label == 'Paste') {
-                                    buttonItems.add(
-                                      ContextMenuButtonItem(
-                                        onPressed: () async {
-                                          final imageBytes = await Pasteboard.image;
-                                          if (imageBytes != null && imageBytes.isNotEmpty) {
-                                            _pasteFromClipboard();
-                                          } else {
-                                            editableTextState.pasteText(SelectionChangedCause.toolbar);
-                                          }
-                                          editableTextState.hideToolbar();
-                                        },
-                                        label: 'Paste',
-                                      ),
-                                    );
-                                  } else {
-                                    buttonItems.add(item);
+                                      );
+                                    } else {
+                                      buttonItems.add(item);
+                                    }
                                   }
-                                }
-                                return AdaptiveTextSelectionToolbar.buttonItems(
-                                  anchors: editableTextState.contextMenuAnchors,
-                                  buttonItems: buttonItems,
-                                );
-                              },
-                              decoration: InputDecoration(
-                                hintText: 'Message...',
-                                hintStyle: TextStyle(
-                                  color: cs.onSurface.withValues(alpha: 0.5),
-                                ),
-                                isDense: true,
-                                contentPadding: const EdgeInsets.symmetric(
-                                  horizontal: 14,
-                                  vertical: 12,
-                                ),
-                                suffixIcon: IconButton(
-                                  icon: Icon(
-                                    Icons.sentiment_satisfied_outlined,
-                                    color: cs.onSurface.withValues(alpha: 0.6),
+                                  return AdaptiveTextSelectionToolbar.buttonItems(
+                                    anchors:
+                                        editableTextState.contextMenuAnchors,
+                                    buttonItems: buttonItems,
+                                  );
+                                },
+                                decoration: InputDecoration(
+                                  hintText: 'Message...',
+                                  hintStyle: TextStyle(
+                                    color: cs.onSurface.withValues(alpha: 0.5),
                                   ),
-                                  onPressed: _showEmojiPickerSheet,
+                                  isDense: true,
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 14,
+                                    vertical: 12,
+                                  ),
+                                  suffixIcon: IconButton(
+                                    icon: Icon(
+                                      Icons.sentiment_satisfied_outlined,
+                                      color: cs.onSurface.withValues(
+                                        alpha: 0.6,
+                                      ),
+                                    ),
+                                    onPressed: _showEmojiPickerSheet,
+                                  ),
+                                  border: InputBorder.none,
+                                  focusedBorder: InputBorder.none,
+                                  enabledBorder: InputBorder.none,
                                 ),
-                                border: InputBorder.none,
-                                focusedBorder: InputBorder.none,
-                                enabledBorder: InputBorder.none,
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
-                      ),
                 ),
                 if (_isTyping || _pendingImages.isNotEmpty) ...[
                   const SizedBox(width: 6),
@@ -837,10 +932,7 @@ class _ChatScreenState extends State<ChatScreen> {
       width: 38,
       height: 38,
       margin: const EdgeInsets.only(bottom: 2),
-      decoration: BoxDecoration(
-        color: bg,
-        shape: BoxShape.circle,
-      ),
+      decoration: BoxDecoration(color: bg, shape: BoxShape.circle),
       child: IconButton(
         icon: Icon(icon, color: fg, size: 22),
         padding: const EdgeInsets.all(8),
@@ -916,7 +1008,11 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  void _handleMessageAction(MessageAction action, AppEvent event, {String? reaction}) {
+  void _handleMessageAction(
+    MessageAction action,
+    AppEvent event, {
+    String? reaction,
+  }) {
     switch (action) {
       case MessageAction.reply:
         setState(() => _replyingToEvent = event);
@@ -932,7 +1028,12 @@ class _ChatScreenState extends State<ChatScreen> {
         _deleteMessage(event);
         break;
       case MessageAction.translate:
-        Get.snackbar('', 'Translation not yet available', snackPosition: SnackPosition.BOTTOM, duration: const Duration(seconds: 2));
+        Get.snackbar(
+          '',
+          'Translation not yet available',
+          snackPosition: SnackPosition.BOTTOM,
+          duration: const Duration(seconds: 2),
+        );
         break;
       case MessageAction.react:
         final emoji = reaction ?? '❤️';
@@ -1012,10 +1113,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   _replyingToEvent!.body,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: cs.onSurfaceVariant,
-                  ),
+                  style: TextStyle(fontSize: 13, color: cs.onSurfaceVariant),
                 ),
               ],
             ),
@@ -1062,10 +1160,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   _editingEvent!.body,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: cs.onSurfaceVariant,
-                  ),
+                  style: TextStyle(fontSize: 13, color: cs.onSurfaceVariant),
                 ),
               ],
             ),
@@ -1091,7 +1186,12 @@ class _ChatScreenState extends State<ChatScreen> {
       if (room == null) return;
       await room.redactEvent(event.rawEvent.eventId);
       if (!mounted) return;
-      Get.snackbar('', 'Message deleted', snackPosition: SnackPosition.BOTTOM, duration: const Duration(seconds: 1));
+      Get.snackbar(
+        '',
+        'Message deleted',
+        snackPosition: SnackPosition.BOTTOM,
+        duration: const Duration(seconds: 1),
+      );
     } catch (error) {
       if (!mounted) return;
       Get.snackbar('Error', 'Delete failed: $error');
@@ -1123,7 +1223,9 @@ class _ChatScreenState extends State<ChatScreen> {
                     radius: 16,
                     backgroundColor: Theme.of(ctx).colorScheme.primaryContainer,
                     child: Text(
-                      r.displayname.isNotEmpty ? r.displayname[0].toUpperCase() : '#',
+                      r.displayname.isNotEmpty
+                          ? r.displayname[0].toUpperCase()
+                          : '#',
                       style: TextStyle(
                         fontSize: 12,
                         color: Theme.of(ctx).colorScheme.onPrimaryContainer,
@@ -1148,7 +1250,12 @@ class _ChatScreenState extends State<ChatScreen> {
       if (room == null) return;
       await room.sendTextEvent('Forwarded: ${event.body}');
       if (!mounted) return;
-      Get.snackbar('', 'Forwarded', snackPosition: SnackPosition.BOTTOM, duration: const Duration(seconds: 1));
+      Get.snackbar(
+        '',
+        'Forwarded',
+        snackPosition: SnackPosition.BOTTOM,
+        duration: const Duration(seconds: 1),
+      );
     } catch (error) {
       if (!mounted) return;
       Get.snackbar('Error', 'Forward failed: $error');
@@ -1233,17 +1340,18 @@ class _ChatScreenState extends State<ChatScreen> {
                     '${sm.text} · $time',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: cs.onSurfaceVariant,
-                    ),
+                    style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
                   ),
                 ),
                 InkWell(
                   onTap: () {
                     setState(() => _scheduledMessages.remove(sm));
                   },
-                  child: Icon(Icons.close, size: 16, color: cs.onSurfaceVariant),
+                  child: Icon(
+                    Icons.close,
+                    size: 16,
+                    color: cs.onSurfaceVariant,
+                  ),
                 ),
               ],
             );
@@ -1309,7 +1417,9 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _checkScheduledMessages() async {
     if (_scheduledMessages.isEmpty) return;
     final now = DateTime.now();
-    final due = _scheduledMessages.where((sm) => sm.sendAt.isBefore(now)).toList();
+    final due = _scheduledMessages
+        .where((sm) => sm.sendAt.isBefore(now))
+        .toList();
 
     for (final sm in due) {
       try {
@@ -1327,7 +1437,9 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     if (due.isNotEmpty && mounted) {
-      setState(() => _scheduledMessages.removeWhere((sm) => sm.sendAt.isBefore(now)));
+      setState(
+        () => _scheduledMessages.removeWhere((sm) => sm.sendAt.isBefore(now)),
+      );
     }
   }
 
@@ -1364,7 +1476,8 @@ class _ChatScreenState extends State<ChatScreen> {
         return;
       }
       final tempDir = await getTemporaryDirectory();
-      final path = '${tempDir.path}/clipboard_image_${DateTime.now().millisecondsSinceEpoch}.png';
+      final path =
+          '${tempDir.path}/clipboard_image_${DateTime.now().millisecondsSinceEpoch}.png';
       final file = File(path);
       await file.writeAsBytes(imageBytes);
       final media = XFile(path, mimeType: 'image/png');
@@ -1388,7 +1501,8 @@ class _ChatScreenState extends State<ChatScreen> {
       final mime = content.mimeType;
       final ext = _mimeToExt(mime);
       final tempDir = await getTemporaryDirectory();
-      final path = '${tempDir.path}/keyboard_image_${DateTime.now().millisecondsSinceEpoch}.$ext';
+      final path =
+          '${tempDir.path}/keyboard_image_${DateTime.now().millisecondsSinceEpoch}.$ext';
       final file = File(path);
       await file.writeAsBytes(bytes);
       final media = XFile(path, mimeType: mime);
@@ -1472,11 +1586,20 @@ class _ChatScreenState extends State<ChatScreen> {
         Get.snackbar('Error', 'Room not found');
         return;
       }
-      final matrixFile = MatrixFile(
+      final metadata = await loadVideoMetadata(file);
+      final thumbnail = await createMatrixVideoThumbnail(
+        file.path,
+        fileName: file.path.split('/').last,
+      );
+      final matrixFile = MatrixVideoFile(
         bytes: bytes,
         name: file.path.split('/').last,
+        mimeType: mimeType,
+        width: metadata.width,
+        height: metadata.height,
+        duration: metadata.durationMs,
       );
-      await room.sendFileEvent(matrixFile);
+      await room.sendFileEvent(matrixFile, thumbnail: thumbnail);
     } catch (error) {
       if (!mounted) return;
       Get.snackbar('Error', 'Video send failed: $error');
@@ -1517,9 +1640,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 top: 2,
                 right: 2,
                 child: GestureDetector(
-                  onTap: () => setState(
-                    () => _pendingImages.removeAt(index),
-                  ),
+                  onTap: () => setState(() => _pendingImages.removeAt(index)),
                   child: Container(
                     decoration: const BoxDecoration(
                       color: Colors.black54,
@@ -1545,8 +1666,18 @@ class _ChatScreenState extends State<ChatScreen> {
     if (mime.startsWith('video/')) return true;
     final parts = file.path.toLowerCase().split('.');
     final ext = parts.length > 1 ? parts.last : '';
-    return ['mp4', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'webm', 'm4v', '3gp', '3gpp']
-        .contains(ext);
+    return [
+      'mp4',
+      'mov',
+      'avi',
+      'mkv',
+      'wmv',
+      'flv',
+      'webm',
+      'm4v',
+      '3gp',
+      '3gpp',
+    ].contains(ext);
   }
 
   Future<void> _pickAndSendFile() async {
@@ -1571,10 +1702,7 @@ class _ChatScreenState extends State<ChatScreen> {
         return;
       }
 
-      final matrixFile = MatrixFile(
-        bytes: bytes,
-        name: file.name,
-      );
+      final matrixFile = MatrixFile(bytes: bytes, name: file.name);
       await room.sendFileEvent(matrixFile);
     } catch (error) {
       if (!mounted) return;
@@ -1613,8 +1741,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _discardRecording() async {
     try {
-      if (_recordedAudioFile != null &&
-          await _recordedAudioFile!.exists()) {
+      if (_recordedAudioFile != null && await _recordedAudioFile!.exists()) {
         await _recordedAudioFile!.delete();
       }
     } catch (e) {
@@ -1692,7 +1819,9 @@ class _ChatScreenState extends State<ChatScreen> {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
           decoration: BoxDecoration(
-            color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
+            color: theme.colorScheme.surfaceContainerHighest.withValues(
+              alpha: 0.6,
+            ),
             borderRadius: BorderRadius.circular(12),
           ),
           child: Text(
@@ -1893,10 +2022,7 @@ class _AudioPreviewPlayerState extends State<_AudioPreviewPlayer> {
       width: 38,
       height: 38,
       margin: const EdgeInsets.only(bottom: 2),
-      decoration: BoxDecoration(
-        color: bg,
-        shape: BoxShape.circle,
-      ),
+      decoration: BoxDecoration(color: bg, shape: BoxShape.circle),
       child: IconButton(
         icon: Icon(icon, color: fg, size: 22),
         padding: const EdgeInsets.all(8),
@@ -1911,117 +2037,891 @@ class _EmojiPickerSheet extends StatelessWidget {
   const _EmojiPickerSheet();
 
   static const List<String> _emojis = [
-    '😀', '😂', '🥰', '😍', '😎', '🤔', '😭', '😡',
-    '👍', '👎', '👏', '🙌', '🤝', '🙏', '💪', '❤️',
-    '🔥', '🎉', '✨', '💯', '😊', '😉', '🤣', '😘',
-    '🤗', '🤭', '😴', '😷', '🤢', '🤬', '😱', '🤯',
-    '🥳', '😇', '🤠', '🥶', '🥵', '🤡', '👻', '💀',
-    '👋', '✋', '🤚', '🖐️', '👌', '🤌', '🤏', '✌️',
-    '🤞', '🤟', '🤘', '🤙', '👈', '👉', '👆', '👇',
-    '☝️', '👍', '👎', '✊', '👊', '🤛', '🤜', '👏',
-    '🙌', '👐', '🤲', '🤝', '🙏', '✍️', '💅', '🤳',
-    '💪', '🦾', '🦿', '🦵', '🦶', '👂', '🦻', '👃',
-    '🧠', '🫀', '🫁', '🦷', '🦴', '👀', '👁️', '👅',
-    '👄', '💋', '🩸', '🎃', '🤖', '👽', '👾', '🤡',
-    '💩', '👍', '👎', '👊', '✊', '🤛', '🤜', '👏',
-    '🙌', '👐', '🤲', '🤝', '🙏', '✍️', '💅', '🤳',
-    '💪', '🦾', '🦿', '🦵', '🦶', '👂', '🦻', '👃',
-    '🐶', '🐱', '🐭', '🐹', '🐰', '🦊', '🐻', '🐼',
-    '🐨', '🐯', '🦁', '🐮', '🐷', '🐽', '🐸', '🐵',
-    '🙈', '🙉', '🙊', '🐒', '🐔', '🐧', '🐦', '🐤',
-    '🐣', '🐥', '🦆', '🦅', '🦉', '🦇', '🐺', '🐗',
-    '🐴', '🦄', '🐝', '🐛', '🦋', '🐌', '🐞', '🐜',
-    '🦟', '🦗', '🕷️', '🕸️', '🦂', '🐢', '🐍', '🦎',
-    '🦖', '🦕', '🐙', '🦑', '🦐', '🦞', '🦀', '🐡',
-    '🐠', '🐟', '🐬', '🐳', '🐋', '🦈', '🐊', '🐅',
-    '🐆', '🦓', '🦍', '🦧', '🐘', '🦛', '🦏', '🐪',
-    '🐫', '🦒', '🦘', '🦬', '🐃', '🐂', '🐄', '🐖',
-    '🐏', '🐑', '🦙', '🐐', '🦌', '🐕', '🐩', '🦮',
-    '🐕‍🦺', '🐈', '🐈‍⬛', '🐓', '🦃', '🦚', '🦜', '🦢',
-    '🦩', '🕊️', '🐇', '🦝', '🦨', '🦡', '🦦', '🦥',
-    '🐁', '🐀', '🐿️', '🦔', '🍎', '🍐', '🍊', '🍋',
-    '🍌', '🍉', '🍇', '🍓', '🫐', '🍈', '🍒', '🍑',
-    '🥭', '🍍', '🥥', '🥝', '🍅', '🍆', '🥑', '🥦',
-    '🥬', '🥒', '🌶️', '🫑', '🌽', '🥕', '🫒', '🧄',
-    '🧅', '🥔', '🍠', '🥐', '🥯', '🍞', '🥖', '🥨',
-    '🧀', '🥚', '🍳', '🧈', '🥞', '🧇', '🥓', '🥩',
-    '🍗', '🍖', '🌭', '🍔', '🍟', '🍕', '🥪', '🥙',
-    '🧆', '🌮', '🌯', '🫔', '🥗', '🥘', '🫕', '🥫',
-    '🍝', '🍜', '🍲', '🍛', '🍣', '🍱', '🥟', '🦪',
-    '🍤', '🍙', '🍚', '🍘', '🍥', '🥠', '🥮', '🍢',
-    '🍡', '🍧', '🍨', '🍦', '🥧', '🧁', '🍰', '🎂',
-    '🍮', '🍭', '🍬', '🍫', '🍿', '🍩', '🍪', '🌰',
-    '🥜', '🍯', '🥛', '🍼', '🫖', '☕', '🍵', '🧃',
-    '🥤', '🧋', '🍶', '🍺', '🍻', '🥂', '🍷', '🥃',
-    '🍸', '🍹', '🧉', '🍾', '🧊', '🥄', '🍴', '🍽️',
-    '🥣', '🥡', '🥢', '🧂', '⚽', '🏀', '🏈', '⚾',
-    '🥎', '🎾', '🏐', '🏉', '🥏', '🎱', '🪀', '🏓',
-    '🏸', '🏒', '🏑', '🥍', '🏏', '🥅', '⛳', '🪁',
-    '🏹', '🎣', '🤿', '🥊', '🥋', '🎽', '🛹', '🛼',
-    '🛷', '⛸️', '🥌', '🎿', '⛷️', '🏂', '🪂', '🏋️',
-    '🤼', '🤸', '⛹️', '🤺', '🤾', '🏌️', '🏇', '🧘',
-    '🏄', '🏊', '🤽', '🚴', '🚵', '🎖️', '🏆', '🏅',
-    '🥇', '🥈', '🥉', '🎗️', '🏵️', '🎫', '🎟️', '🎪',
-    '🤹', '🎭', '🩰', '🎨', '🎬', '🎤', '🎧', '🎼',
-    '🎹', '🥁', '🎷', '🎺', '🎸', '🪕', '🎻', '🪗',
-    '🎲', '♟️', '🎯', '🎳', '🎮', '🎰', '🧩', '🚗',
-    '🚕', '🚙', '🚌', '🚎', '🏎️', '🚓', '🚑', '🚒',
-    '🚐', '🛻', '🚚', '🚛', '🚜', '🦯', '🦽', '🦼',
-    '🛴', '🚲', '🛵', '🏍️', '🛺', '🚨', '🚔', '🚍',
-    '🚘', '🚖', '🚡', '🚠', '🚟', '🚃', '🚋', '🚞',
-    '🚝', '🚄', '🚅', '🚈', '🚂', '🚆', '🚇', '🚊',
-    '🚉', '✈️', '🛫', '🛬', '🛩️', '💺', '🛶', '⛵',
-    '🛥️', '🚤', '🛳️', '⛴️', '🚢', '⚓', '🪝', '⛽',
-    '🚧', '🚦', '🚥', '🚏', '🗺️', '🗿', '🗽', '🗼',
-    '🏰', '🏯', '🏟️', '🎡', '🎢', '🎠', '⛲', '⛱️',
-    '🏖️', '🏝️', '🏜️', '🌋', '⛰️', '🏔️', '🗻', '🏕️',
-    '⛺', '🏠', '🏡', '🏘️', '🏚️', '🏗️', '🏭', '🏢',
-    '🏬', '🏣', '🏤', '🏥', '🏦', '🏨', '🏪', '🏫',
-    '🏩', '💒', '🏛️', '⛪', '🕌', '🕍', '🛕', '🕋',
-    '⛩️', '🛤️', '🛣️', '🗾', '🎑', '🏞️', '🌅', '🌄',
-    '🌠', '🎇', '🎆', '🌇', '🌆', '🏙️', '🌃', '🌉',
-    '🌌', '🌠', '🥶', '🥵', '🌡️', '☀️', '🌤️', '⛅',
-    '🌥️', '☁️', '🌦️', '🌧️', '⛈️', '🌩️', '🌨️', '❄️',
-    '☃️', '⛄', '🌬️', '💨', '💧', '☔', '☂️', '🌊',
-    '🌫️', '🌪️', '🌀', '🌈', '🌂', '🔥', '💥', '✨',
-    '🎊', '🎉', '🎀', '🎁', '🎗️', '🏷️', '🕯️', '💡',
-    '🔦', '🏮', '🪔', '📜', '📃', '📄', '📑', '📊',
-    '📈', '📉', '🗒️', '🗓️', '📆', '📅', '📇', '🗃️',
-    '🗳️', '🗄️', '📋', '📁', '📂', '🗂️', '🗞️', '📰',
-    '📓', '📔', '📒', '📕', '📗', '📘', '📙', '📚',
-    '📖', '🔖', '🧷', '🔗', '📎', '🖇️', '📐', '📏',
-    '🌈', '🎨', '🧵', '🧶', '🪡', '🧷', '🔧', '🔨',
-    '🪛', '⛏️', '🪚', '🪓', '🔩', '🦯', '🗜️', '⚙️',
-    '🪝', '🧱', '🪨', '🪵', '🛢️', '⛽', '🧨', '🚬',
-    '⚰️', '🪦', '🧸', '🪆', '🧩', '🧮', '🪄', '💎',
-    '💍', '👑', '💄', '💋', '💌', '📧', '📨', '📩',
-    '📤', '📥', '📦', '🏷️', '📪', '📫', '📬', '📭',
-    '📮', '🗳️', '✏️', '✒️', '🖋️', '🖊️', '🖌️', '🖍️',
-    '📝', '💼', '📁', '📂', '🗂️', '📅', '📆', '🗒️',
-    '🗓️', '📇', '🗃️', '🗄️', '📈', '📉', '📊', '📋',
-    '📌', '📍', '📎', '🖇️', '📏', '📐', '✂️', '🗃️',
-    '📒', '📓', '📔', '📕', '📖', '📗', '📘', '📙',
-    '📚', '🔖', '🏷️', '💰', '🪙', '💴', '💵', '💶',
-    '💷', '💸', '💳', '🧾', '💹', '💱', '💲', '💰',
-    '🔮', '🪄', '🧿', '🧸', '🪆', '🖼️', '🧵', '🧶',
-    '🪡', '🎀', '🎗️', '🎁', '🎊', '🎉', '🎈', '🎎',
-    '🏆', '🥇', '🥈', '🥉', '🏅', '🎖️', '🥇', '🥈',
-    '🥉', '🏆', '🏅', '🎗️', '🎫', '🎟️', '🎪', '🤹',
-    '🎭', '🎨', '🩰', '🎬', '🎤', '🎧', '🎼', '🎹',
-    '🥁', '🎷', '🎺', '🎸', '🪕', '🎻', '🪗', '🎮',
-    '🎰', '🧩', '🎲', '♟️', '🎯', '🎳', '🎱', '🪀',
-    '🏓', '🏸', '🥊', '🥋', '🎽', '🛹', '🛼', '🛷',
-    '⛸️', '🥌', '🎿', '⛷️', '🏂', '🪂', '🏋️', '🤼',
-    '🤸', '⛹️', '🤺', '🤾', '🏌️', '🏇', '🧘', '🏄',
-    '🏊', '🤽', '🚴', '🚵', '🛀', '🛌', '🧑', '👶',
-    '🧒', '👦', '👧', '🧑', '👱', '👨', '🧔', '👩',
-    '🧓', '👴', '👵', '🙍', '🙎', '🙅', '🙆', '💁',
-    '🙋', '🧏', '🙇', '🤦', '🤷', '💆', '💇', '🚶',
-    '🧍', '🧎', '🏃', '💃', '🕺', '👯', '🧖', '🧗',
-    '🤺', '🏇', '⛷️', '🏂', '🏌️', '🏄', '🚣', '🏊',
-    '⛹️', '🏋️', '🚴', '🚵', '🤸', '🤼', '🤽', '🧘',
-    '🛀', '🛌', '👭', '👫', '👬', '💏', '💑', '👪',
-    '👨‍👩‍👦', '👨‍👩‍👧', '👨‍👩‍👧‍👦', '👨‍👩‍👦‍👦', '👨‍👩‍👧‍👧',
+    '😀',
+    '😂',
+    '🥰',
+    '😍',
+    '😎',
+    '🤔',
+    '😭',
+    '😡',
+    '👍',
+    '👎',
+    '👏',
+    '🙌',
+    '🤝',
+    '🙏',
+    '💪',
+    '❤️',
+    '🔥',
+    '🎉',
+    '✨',
+    '💯',
+    '😊',
+    '😉',
+    '🤣',
+    '😘',
+    '🤗',
+    '🤭',
+    '😴',
+    '😷',
+    '🤢',
+    '🤬',
+    '😱',
+    '🤯',
+    '🥳',
+    '😇',
+    '🤠',
+    '🥶',
+    '🥵',
+    '🤡',
+    '👻',
+    '💀',
+    '👋',
+    '✋',
+    '🤚',
+    '🖐️',
+    '👌',
+    '🤌',
+    '🤏',
+    '✌️',
+    '🤞',
+    '🤟',
+    '🤘',
+    '🤙',
+    '👈',
+    '👉',
+    '👆',
+    '👇',
+    '☝️',
+    '👍',
+    '👎',
+    '✊',
+    '👊',
+    '🤛',
+    '🤜',
+    '👏',
+    '🙌',
+    '👐',
+    '🤲',
+    '🤝',
+    '🙏',
+    '✍️',
+    '💅',
+    '🤳',
+    '💪',
+    '🦾',
+    '🦿',
+    '🦵',
+    '🦶',
+    '👂',
+    '🦻',
+    '👃',
+    '🧠',
+    '🫀',
+    '🫁',
+    '🦷',
+    '🦴',
+    '👀',
+    '👁️',
+    '👅',
+    '👄',
+    '💋',
+    '🩸',
+    '🎃',
+    '🤖',
+    '👽',
+    '👾',
+    '🤡',
+    '💩',
+    '👍',
+    '👎',
+    '👊',
+    '✊',
+    '🤛',
+    '🤜',
+    '👏',
+    '🙌',
+    '👐',
+    '🤲',
+    '🤝',
+    '🙏',
+    '✍️',
+    '💅',
+    '🤳',
+    '💪',
+    '🦾',
+    '🦿',
+    '🦵',
+    '🦶',
+    '👂',
+    '🦻',
+    '👃',
+    '🐶',
+    '🐱',
+    '🐭',
+    '🐹',
+    '🐰',
+    '🦊',
+    '🐻',
+    '🐼',
+    '🐨',
+    '🐯',
+    '🦁',
+    '🐮',
+    '🐷',
+    '🐽',
+    '🐸',
+    '🐵',
+    '🙈',
+    '🙉',
+    '🙊',
+    '🐒',
+    '🐔',
+    '🐧',
+    '🐦',
+    '🐤',
+    '🐣',
+    '🐥',
+    '🦆',
+    '🦅',
+    '🦉',
+    '🦇',
+    '🐺',
+    '🐗',
+    '🐴',
+    '🦄',
+    '🐝',
+    '🐛',
+    '🦋',
+    '🐌',
+    '🐞',
+    '🐜',
+    '🦟',
+    '🦗',
+    '🕷️',
+    '🕸️',
+    '🦂',
+    '🐢',
+    '🐍',
+    '🦎',
+    '🦖',
+    '🦕',
+    '🐙',
+    '🦑',
+    '🦐',
+    '🦞',
+    '🦀',
+    '🐡',
+    '🐠',
+    '🐟',
+    '🐬',
+    '🐳',
+    '🐋',
+    '🦈',
+    '🐊',
+    '🐅',
+    '🐆',
+    '🦓',
+    '🦍',
+    '🦧',
+    '🐘',
+    '🦛',
+    '🦏',
+    '🐪',
+    '🐫',
+    '🦒',
+    '🦘',
+    '🦬',
+    '🐃',
+    '🐂',
+    '🐄',
+    '🐖',
+    '🐏',
+    '🐑',
+    '🦙',
+    '🐐',
+    '🦌',
+    '🐕',
+    '🐩',
+    '🦮',
+    '🐕‍🦺',
+    '🐈',
+    '🐈‍⬛',
+    '🐓',
+    '🦃',
+    '🦚',
+    '🦜',
+    '🦢',
+    '🦩',
+    '🕊️',
+    '🐇',
+    '🦝',
+    '🦨',
+    '🦡',
+    '🦦',
+    '🦥',
+    '🐁',
+    '🐀',
+    '🐿️',
+    '🦔',
+    '🍎',
+    '🍐',
+    '🍊',
+    '🍋',
+    '🍌',
+    '🍉',
+    '🍇',
+    '🍓',
+    '🫐',
+    '🍈',
+    '🍒',
+    '🍑',
+    '🥭',
+    '🍍',
+    '🥥',
+    '🥝',
+    '🍅',
+    '🍆',
+    '🥑',
+    '🥦',
+    '🥬',
+    '🥒',
+    '🌶️',
+    '🫑',
+    '🌽',
+    '🥕',
+    '🫒',
+    '🧄',
+    '🧅',
+    '🥔',
+    '🍠',
+    '🥐',
+    '🥯',
+    '🍞',
+    '🥖',
+    '🥨',
+    '🧀',
+    '🥚',
+    '🍳',
+    '🧈',
+    '🥞',
+    '🧇',
+    '🥓',
+    '🥩',
+    '🍗',
+    '🍖',
+    '🌭',
+    '🍔',
+    '🍟',
+    '🍕',
+    '🥪',
+    '🥙',
+    '🧆',
+    '🌮',
+    '🌯',
+    '🫔',
+    '🥗',
+    '🥘',
+    '🫕',
+    '🥫',
+    '🍝',
+    '🍜',
+    '🍲',
+    '🍛',
+    '🍣',
+    '🍱',
+    '🥟',
+    '🦪',
+    '🍤',
+    '🍙',
+    '🍚',
+    '🍘',
+    '🍥',
+    '🥠',
+    '🥮',
+    '🍢',
+    '🍡',
+    '🍧',
+    '🍨',
+    '🍦',
+    '🥧',
+    '🧁',
+    '🍰',
+    '🎂',
+    '🍮',
+    '🍭',
+    '🍬',
+    '🍫',
+    '🍿',
+    '🍩',
+    '🍪',
+    '🌰',
+    '🥜',
+    '🍯',
+    '🥛',
+    '🍼',
+    '🫖',
+    '☕',
+    '🍵',
+    '🧃',
+    '🥤',
+    '🧋',
+    '🍶',
+    '🍺',
+    '🍻',
+    '🥂',
+    '🍷',
+    '🥃',
+    '🍸',
+    '🍹',
+    '🧉',
+    '🍾',
+    '🧊',
+    '🥄',
+    '🍴',
+    '🍽️',
+    '🥣',
+    '🥡',
+    '🥢',
+    '🧂',
+    '⚽',
+    '🏀',
+    '🏈',
+    '⚾',
+    '🥎',
+    '🎾',
+    '🏐',
+    '🏉',
+    '🥏',
+    '🎱',
+    '🪀',
+    '🏓',
+    '🏸',
+    '🏒',
+    '🏑',
+    '🥍',
+    '🏏',
+    '🥅',
+    '⛳',
+    '🪁',
+    '🏹',
+    '🎣',
+    '🤿',
+    '🥊',
+    '🥋',
+    '🎽',
+    '🛹',
+    '🛼',
+    '🛷',
+    '⛸️',
+    '🥌',
+    '🎿',
+    '⛷️',
+    '🏂',
+    '🪂',
+    '🏋️',
+    '🤼',
+    '🤸',
+    '⛹️',
+    '🤺',
+    '🤾',
+    '🏌️',
+    '🏇',
+    '🧘',
+    '🏄',
+    '🏊',
+    '🤽',
+    '🚴',
+    '🚵',
+    '🎖️',
+    '🏆',
+    '🏅',
+    '🥇',
+    '🥈',
+    '🥉',
+    '🎗️',
+    '🏵️',
+    '🎫',
+    '🎟️',
+    '🎪',
+    '🤹',
+    '🎭',
+    '🩰',
+    '🎨',
+    '🎬',
+    '🎤',
+    '🎧',
+    '🎼',
+    '🎹',
+    '🥁',
+    '🎷',
+    '🎺',
+    '🎸',
+    '🪕',
+    '🎻',
+    '🪗',
+    '🎲',
+    '♟️',
+    '🎯',
+    '🎳',
+    '🎮',
+    '🎰',
+    '🧩',
+    '🚗',
+    '🚕',
+    '🚙',
+    '🚌',
+    '🚎',
+    '🏎️',
+    '🚓',
+    '🚑',
+    '🚒',
+    '🚐',
+    '🛻',
+    '🚚',
+    '🚛',
+    '🚜',
+    '🦯',
+    '🦽',
+    '🦼',
+    '🛴',
+    '🚲',
+    '🛵',
+    '🏍️',
+    '🛺',
+    '🚨',
+    '🚔',
+    '🚍',
+    '🚘',
+    '🚖',
+    '🚡',
+    '🚠',
+    '🚟',
+    '🚃',
+    '🚋',
+    '🚞',
+    '🚝',
+    '🚄',
+    '🚅',
+    '🚈',
+    '🚂',
+    '🚆',
+    '🚇',
+    '🚊',
+    '🚉',
+    '✈️',
+    '🛫',
+    '🛬',
+    '🛩️',
+    '💺',
+    '🛶',
+    '⛵',
+    '🛥️',
+    '🚤',
+    '🛳️',
+    '⛴️',
+    '🚢',
+    '⚓',
+    '🪝',
+    '⛽',
+    '🚧',
+    '🚦',
+    '🚥',
+    '🚏',
+    '🗺️',
+    '🗿',
+    '🗽',
+    '🗼',
+    '🏰',
+    '🏯',
+    '🏟️',
+    '🎡',
+    '🎢',
+    '🎠',
+    '⛲',
+    '⛱️',
+    '🏖️',
+    '🏝️',
+    '🏜️',
+    '🌋',
+    '⛰️',
+    '🏔️',
+    '🗻',
+    '🏕️',
+    '⛺',
+    '🏠',
+    '🏡',
+    '🏘️',
+    '🏚️',
+    '🏗️',
+    '🏭',
+    '🏢',
+    '🏬',
+    '🏣',
+    '🏤',
+    '🏥',
+    '🏦',
+    '🏨',
+    '🏪',
+    '🏫',
+    '🏩',
+    '💒',
+    '🏛️',
+    '⛪',
+    '🕌',
+    '🕍',
+    '🛕',
+    '🕋',
+    '⛩️',
+    '🛤️',
+    '🛣️',
+    '🗾',
+    '🎑',
+    '🏞️',
+    '🌅',
+    '🌄',
+    '🌠',
+    '🎇',
+    '🎆',
+    '🌇',
+    '🌆',
+    '🏙️',
+    '🌃',
+    '🌉',
+    '🌌',
+    '🌠',
+    '🥶',
+    '🥵',
+    '🌡️',
+    '☀️',
+    '🌤️',
+    '⛅',
+    '🌥️',
+    '☁️',
+    '🌦️',
+    '🌧️',
+    '⛈️',
+    '🌩️',
+    '🌨️',
+    '❄️',
+    '☃️',
+    '⛄',
+    '🌬️',
+    '💨',
+    '💧',
+    '☔',
+    '☂️',
+    '🌊',
+    '🌫️',
+    '🌪️',
+    '🌀',
+    '🌈',
+    '🌂',
+    '🔥',
+    '💥',
+    '✨',
+    '🎊',
+    '🎉',
+    '🎀',
+    '🎁',
+    '🎗️',
+    '🏷️',
+    '🕯️',
+    '💡',
+    '🔦',
+    '🏮',
+    '🪔',
+    '📜',
+    '📃',
+    '📄',
+    '📑',
+    '📊',
+    '📈',
+    '📉',
+    '🗒️',
+    '🗓️',
+    '📆',
+    '📅',
+    '📇',
+    '🗃️',
+    '🗳️',
+    '🗄️',
+    '📋',
+    '📁',
+    '📂',
+    '🗂️',
+    '🗞️',
+    '📰',
+    '📓',
+    '📔',
+    '📒',
+    '📕',
+    '📗',
+    '📘',
+    '📙',
+    '📚',
+    '📖',
+    '🔖',
+    '🧷',
+    '🔗',
+    '📎',
+    '🖇️',
+    '📐',
+    '📏',
+    '🌈',
+    '🎨',
+    '🧵',
+    '🧶',
+    '🪡',
+    '🧷',
+    '🔧',
+    '🔨',
+    '🪛',
+    '⛏️',
+    '🪚',
+    '🪓',
+    '🔩',
+    '🦯',
+    '🗜️',
+    '⚙️',
+    '🪝',
+    '🧱',
+    '🪨',
+    '🪵',
+    '🛢️',
+    '⛽',
+    '🧨',
+    '🚬',
+    '⚰️',
+    '🪦',
+    '🧸',
+    '🪆',
+    '🧩',
+    '🧮',
+    '🪄',
+    '💎',
+    '💍',
+    '👑',
+    '💄',
+    '💋',
+    '💌',
+    '📧',
+    '📨',
+    '📩',
+    '📤',
+    '📥',
+    '📦',
+    '🏷️',
+    '📪',
+    '📫',
+    '📬',
+    '📭',
+    '📮',
+    '🗳️',
+    '✏️',
+    '✒️',
+    '🖋️',
+    '🖊️',
+    '🖌️',
+    '🖍️',
+    '📝',
+    '💼',
+    '📁',
+    '📂',
+    '🗂️',
+    '📅',
+    '📆',
+    '🗒️',
+    '🗓️',
+    '📇',
+    '🗃️',
+    '🗄️',
+    '📈',
+    '📉',
+    '📊',
+    '📋',
+    '📌',
+    '📍',
+    '📎',
+    '🖇️',
+    '📏',
+    '📐',
+    '✂️',
+    '🗃️',
+    '📒',
+    '📓',
+    '📔',
+    '📕',
+    '📖',
+    '📗',
+    '📘',
+    '📙',
+    '📚',
+    '🔖',
+    '🏷️',
+    '💰',
+    '🪙',
+    '💴',
+    '💵',
+    '💶',
+    '💷',
+    '💸',
+    '💳',
+    '🧾',
+    '💹',
+    '💱',
+    '💲',
+    '💰',
+    '🔮',
+    '🪄',
+    '🧿',
+    '🧸',
+    '🪆',
+    '🖼️',
+    '🧵',
+    '🧶',
+    '🪡',
+    '🎀',
+    '🎗️',
+    '🎁',
+    '🎊',
+    '🎉',
+    '🎈',
+    '🎎',
+    '🏆',
+    '🥇',
+    '🥈',
+    '🥉',
+    '🏅',
+    '🎖️',
+    '🥇',
+    '🥈',
+    '🥉',
+    '🏆',
+    '🏅',
+    '🎗️',
+    '🎫',
+    '🎟️',
+    '🎪',
+    '🤹',
+    '🎭',
+    '🎨',
+    '🩰',
+    '🎬',
+    '🎤',
+    '🎧',
+    '🎼',
+    '🎹',
+    '🥁',
+    '🎷',
+    '🎺',
+    '🎸',
+    '🪕',
+    '🎻',
+    '🪗',
+    '🎮',
+    '🎰',
+    '🧩',
+    '🎲',
+    '♟️',
+    '🎯',
+    '🎳',
+    '🎱',
+    '🪀',
+    '🏓',
+    '🏸',
+    '🥊',
+    '🥋',
+    '🎽',
+    '🛹',
+    '🛼',
+    '🛷',
+    '⛸️',
+    '🥌',
+    '🎿',
+    '⛷️',
+    '🏂',
+    '🪂',
+    '🏋️',
+    '🤼',
+    '🤸',
+    '⛹️',
+    '🤺',
+    '🤾',
+    '🏌️',
+    '🏇',
+    '🧘',
+    '🏄',
+    '🏊',
+    '🤽',
+    '🚴',
+    '🚵',
+    '🛀',
+    '🛌',
+    '🧑',
+    '👶',
+    '🧒',
+    '👦',
+    '👧',
+    '🧑',
+    '👱',
+    '👨',
+    '🧔',
+    '👩',
+    '🧓',
+    '👴',
+    '👵',
+    '🙍',
+    '🙎',
+    '🙅',
+    '🙆',
+    '💁',
+    '🙋',
+    '🧏',
+    '🙇',
+    '🤦',
+    '🤷',
+    '💆',
+    '💇',
+    '🚶',
+    '🧍',
+    '🧎',
+    '🏃',
+    '💃',
+    '🕺',
+    '👯',
+    '🧖',
+    '🧗',
+    '🤺',
+    '🏇',
+    '⛷️',
+    '🏂',
+    '🏌️',
+    '🏄',
+    '🚣',
+    '🏊',
+    '⛹️',
+    '🏋️',
+    '🚴',
+    '🚵',
+    '🤸',
+    '🤼',
+    '🤽',
+    '🧘',
+    '🛀',
+    '🛌',
+    '👭',
+    '👫',
+    '👬',
+    '💏',
+    '💑',
+    '👪',
+    '👨‍👩‍👦',
+    '👨‍👩‍👧',
+    '👨‍👩‍👧‍👦',
+    '👨‍👩‍👦‍👦',
+    '👨‍👩‍👧‍👧',
   ];
 
   @override
@@ -2066,7 +2966,10 @@ class _EmojiPickerSheet extends StatelessWidget {
                     onTap: () => Navigator.pop(ctx, _emojis[i]),
                     borderRadius: BorderRadius.circular(8),
                     child: Center(
-                      child: Text(_emojis[i], style: const TextStyle(fontSize: 24)),
+                      child: Text(
+                        _emojis[i],
+                        style: const TextStyle(fontSize: 24),
+                      ),
                     ),
                   );
                 },

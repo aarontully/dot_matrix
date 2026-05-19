@@ -23,6 +23,7 @@ class AppRoom {
   final String? lastMessage;
   final DateTime? lastEventTs;
   final bool hasUnread;
+
   /// Best-effort count for the list badge: server [notificationCount], or 1 when
   /// the room has new messages / marked unread but the count is zero.
   int get unreadCount => _unreadCount ?? 0;
@@ -70,12 +71,17 @@ class AppEvent {
   final DateTime originServerTs;
   final bool isMe;
   final Event rawEvent;
+  final Event displayEvent;
+
   /// Map of reaction emoji to count for this message.
   final Map<String, int> reactions;
+
   /// Map of reaction emoji to the current user's reaction eventId for toggling.
   final Map<String, String> myReactions;
+
   /// Map of reaction emoji to list of sender info.
   final Map<String, List<ReactionSender>> reactionSenders;
+
   /// Whether this message has been edited.
   final bool isEdited;
 
@@ -87,9 +93,10 @@ class AppEvent {
     required this.originServerTs,
     required this.isMe,
     required this.rawEvent,
+    Event? displayEvent,
     this.reactions = const {},
     this.myReactions = const {},
     this.reactionSenders = const {},
     this.isEdited = false,
-  });
+  }) : displayEvent = displayEvent ?? rawEvent;
 }
