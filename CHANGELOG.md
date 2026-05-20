@@ -4,6 +4,35 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v1.0.4-alpha] - 2026-05-20
+
+### Added
+- **Video thumbnail generation helper** (`lib/utils/video_thumbnail_helper.dart`) — centralizes local poster-frame extraction for sent and decrypted videos using `fc_native_video_thumbnail`, and reads basic video metadata (width, height, duration) for richer Matrix video events.
+- **Guided device setup screen** (`lib/screens/device_setup_screen.dart`) — introduces a friendlier checklist-based flow for recovery and device verification, with progress, clear next actions, and a live status snapshot.
+
+### Changed
+- **Outgoing video sends** — videos are now sent as proper `MatrixVideoFile` events with metadata and an uploaded JPEG thumbnail, so clients have a real preview frame instead of a blank white/black box with only a play icon.
+- **Video bubble preview behavior** — unencrypted video bubbles now prefer Matrix thumbnail URLs for in-chat preview instead of trying to decode the raw video download URL as if it were an image.
+- **Chat timeline rendering** — the chat screen now caches sorted message views, reply targets, read-receipt anchors, and room-key banner state instead of recomputing them on ordinary composer/focus rebuilds.
+- **Message bubble media detection** — visual-media, audio, caption, and room-key state are now derived once when room events are built, reducing per-bubble regex scanning during scroll.
+- **Encryption setup entry points** — first login, the Home menu nudge, and Encryption settings now all route into the same device setup guide, so recovery and verification follow one consistent path.
+
+### Fixed
+- **Post-login blank screen** — replaced the empty auth loading state with a proper loader screen so signing in no longer flashes a black gap between the login form and the app.
+- **Fresh-login recovery and verification flow** — new-device onboarding now waits for the app shell, offers recovery-key restore first when Secure Backup is available, shows a clear info dialog when it is not, and then prompts for device verification or explains when no other device is available.
+- **Missing device verification prompt after sign-in** — the verification listener and onboarding prompt now run after a new login, which fixes cases where device verification never appeared on first sign-in.
+- **Encryption status clarity** — the status UI now tracks current-device verification separately from encrypted-history recovery, so setup progress is easier to understand at a glance.
+- **Room-key warnings after verification** — completing device verification now refreshes Secure Backup, room timelines, and settings so stale "Waiting for room key" warnings clear properly.
+- **Camera capture preview flow** — taking a photo now stages it in the compose preview strip instead of bypassing the preview and jumping straight into send logic.
+- **Attachment preview crashes with picked videos** — pending media previews no longer try to decode videos as still images; video selections now render with a safe thumbnail/placeholder tile.
+- **Shared media captions** — image/video shares that include meaningful text now render that text beneath the media instead of showing only the picture.
+- **Blank video previews before playback** — fixed the issue where video messages could appear as an empty black/white rectangle until tapped. New videos sent from the app now include a thumbnail, and encrypted received videos can generate a local fallback poster if the event is missing thumbnail metadata.
+- **Remote video fallback rendering** — when a video has no preview image available, the bubble now falls back to a clean tappable video placeholder instead of surfacing a broken-image style failure state.
+- **Bridge-embedded image display** — fixed "Waiting for attachment" messages from the Google Messages bridge (and similar bridges using `fi.mau.gmessages.raw_debug_data`) not rendering. `_isVisualMedia` now detects base64 image signatures inside bridge raw debug data, and `_MediaAttachmentBubble._loadMedia` extracts and decodes the embedded image bytes directly.
+- **Bridge image pixelation** — bridge-embedded images now decode their actual pixel dimensions via `decodeImageFromList`, and the display size is capped to the native resolution so small images are no longer upscaled and blurred. Also switched to `BoxFit.contain` with `FilterQuality.high` for cleaner rendering.
+- **Media URL candidate ordering** — full-resolution download URLs are now added to preview candidates before thumbnail fallbacks, preventing small 250×250 thumbnails from being displayed scaled up.
+- **Chat scroll stutter in long rooms** — removed noisy per-bubble debug logging and eliminated repeated reply-resolution scans during list builds, which reduces hitching when scrolling back through message history.
+
 ## [1.0.1] - 2026-05-18
 
 ### Added

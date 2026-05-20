@@ -44,9 +44,24 @@ class _ScheduledMessage {
   _ScheduledMessage({required this.text, required this.sendAt, this.replyTo});
 }
 
+class _ResolvedTimelineView {
+  const _ResolvedTimelineView({
+    required this.displayedMessages,
+    required this.replyTargetsByEventId,
+    required this.lastReadOutgoingEventId,
+    required this.isWaitingForKey,
+  });
+
+  final List<AppEvent> displayedMessages;
+  final Map<String, AppEvent?> replyTargetsByEventId;
+  final String? lastReadOutgoingEventId;
+  final bool isWaitingForKey;
+}
+
 class _ChatScreenState extends State<ChatScreen> {
   static const double _historyPrefetchThreshold = 600;
   static const int _historyBatchSize = 40;
+  static final DateFormat _dateHeaderFormat = DateFormat.yMMMMd();
 
   final _messageController = TextEditingController();
   final _messageFocusNode = FocusNode();
@@ -58,7 +73,6 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _isMessageFieldFocused = false;
   bool _isRecording = false;
   bool _isLoadingHistory = false;
-  bool _showScrollToBottom = false;
   final List<XFile> _pendingImages = [];
   File? _recordedAudioFile;
   AppEvent? _replyingToEvent;
@@ -66,6 +80,9 @@ class _ChatScreenState extends State<ChatScreen> {
   final List<_ScheduledMessage> _scheduledMessages = [];
   Timer? _scheduleTimer;
   final _messageKeys = <String, GlobalKey>{};
+  List<AppEvent>? _cachedTimelineSourceMessages;
+  String? _cachedTimelineOwnUserId;
+  _ResolvedTimelineView? _cachedTimelineView;
 
   @override
   void initState() {
@@ -95,10 +112,6 @@ class _ChatScreenState extends State<ChatScreen> {
       (_) => _checkScheduledMessages(),
     );
     _scrollController.addListener(() {
-      final show = _scrollController.position.pixels > 200;
-      if (show != _showScrollToBottom) {
-        setState(() => _showScrollToBottom = show);
-      }
       _maybeLoadMoreHistory();
     });
   }
@@ -201,6 +214,55 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  _ResolvedTimelineView _resolveTimelineView(
+    List<AppEvent> messages,
+    String? ownUserId,
+  ) {
+    if (identical(messages, _cachedTimelineSourceMessages) &&
+        ownUserId == _cachedTimelineOwnUserId &&
+        _cachedTimelineView != null) {
+      return _cachedTimelineView!;
+    }
+
+    final displayedMessages = List<AppEvent>.from(messages)
+      ..sort((a, b) => b.originServerTs.compareTo(a.originServerTs));
+    final eventsById = <String, AppEvent>{
+      for (final event in displayedMessages) event.rawEvent.eventId: event,
+    };
+    final replyTargetsByEventId = <String, AppEvent?>{};
+    String? lastReadOutgoingEventId;
+
+    for (final event in displayedMessages) {
+      if (event.rawEvent.relationshipType == RelationshipTypes.reply) {
+        final replyId = event.rawEvent.relationshipEventId;
+        if (replyId != null) {
+          replyTargetsByEventId[event.rawEvent.eventId] = eventsById[replyId];
+        }
+      }
+
+      if (lastReadOutgoingEventId == null && event.isMe) {
+        final hasOtherReaders = event.rawEvent.receipts.any(
+          (r) => r.user.id != ownUserId,
+        );
+        if (hasOtherReaders) {
+          lastReadOutgoingEventId = event.rawEvent.eventId;
+        }
+      }
+    }
+
+    final resolved = _ResolvedTimelineView(
+      displayedMessages: displayedMessages,
+      replyTargetsByEventId: replyTargetsByEventId,
+      lastReadOutgoingEventId: lastReadOutgoingEventId,
+      isWaitingForKey: messages.any((event) => event.isWaitingForRoomKey),
+    );
+
+    _cachedTimelineSourceMessages = messages;
+    _cachedTimelineOwnUserId = ownUserId;
+    _cachedTimelineView = resolved;
+    return resolved;
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -290,33 +352,19 @@ class _ChatScreenState extends State<ChatScreen> {
                   builder: (roomCtrl) {
                     final liveRoom = _findLiveRoom();
                     final messages = liveRoom?.messages ?? widget.room.messages;
-                    final displayedMessages = List<AppEvent>.from(messages)
-                      ..sort(
-                        (a, b) => b.originServerTs.compareTo(a.originServerTs),
-                      );
-                    final isWaitingForKey = messages.any(
-                      (event) => event.body == 'Waiting for room key...',
-                    );
-
                     final auth = Get.find<AuthController>();
                     final ownUserId = auth.client.userID;
-                    String? lastReadOutgoingEventId;
-                    for (final event in displayedMessages) {
-                      if (event.isMe) {
-                        final hasOtherReaders = event.rawEvent.receipts.any(
-                          (r) => r.user.id != ownUserId,
-                        );
-                        if (hasOtherReaders) {
-                          lastReadOutgoingEventId = event.rawEvent.eventId;
-                          break;
-                        }
-                      }
-                    }
+                    final timelineView = _resolveTimelineView(
+                      messages,
+                      ownUserId,
+                    );
+                    final displayedMessages = timelineView.displayedMessages;
 
                     return Expanded(
                       child: Column(
                         children: [
-                          if (isWaitingForKey) _buildRecoveryBanner(theme),
+                          if (timelineView.isWaitingForKey)
+                            _buildRecoveryBanner(theme),
                           Expanded(
                             child: NotificationListener<ScrollNotification>(
                               onNotification: (notification) {
@@ -378,20 +426,10 @@ class _ChatScreenState extends State<ChatScreen> {
                                       newerMessage == null ||
                                       !_isSameSender(event, newerMessage);
 
-                                  // Resolve reply-to event for display
-                                  AppEvent? replyTarget;
-                                  if (event.rawEvent.relationshipType ==
-                                      RelationshipTypes.reply) {
-                                    final replyId =
-                                        event.rawEvent.relationshipEventId;
-                                    if (replyId != null) {
-                                      replyTarget = displayedMessages
-                                          .firstWhereOrNull(
-                                            (e) =>
-                                                e.rawEvent.eventId == replyId,
-                                          );
-                                    }
-                                  }
+                                  final replyTarget =
+                                      timelineView.replyTargetsByEventId[event
+                                          .rawEvent
+                                          .eventId];
 
                                   final key = _messageKeys.putIfAbsent(
                                     event.rawEvent.eventId,
@@ -424,7 +462,8 @@ class _ChatScreenState extends State<ChatScreen> {
                                           isLastInGroup: isLastInGroup,
                                           showReadReceipts:
                                               event.rawEvent.eventId ==
-                                              lastReadOutgoingEventId,
+                                              timelineView
+                                                  .lastReadOutgoingEventId,
                                           replyToEvent: replyTarget,
                                           onReplyTap: replyTarget != null
                                               ? (id) => _scrollToEvent(
@@ -450,22 +489,6 @@ class _ChatScreenState extends State<ChatScreen> {
               ],
             ),
           ),
-          if (_showScrollToBottom)
-            Positioned(
-              right: 16,
-              bottom: 80,
-              child: FloatingActionButton.small(
-                heroTag: 'scrollToBottom',
-                onPressed: () {
-                  _scrollController.animateTo(
-                    0,
-                    duration: const Duration(milliseconds: 300),
-                    curve: Curves.easeOut,
-                  );
-                },
-                child: const Icon(Icons.keyboard_arrow_down),
-              ),
-            ),
         ],
       ),
     );
@@ -1448,7 +1471,11 @@ class _ChatScreenState extends State<ChatScreen> {
     try {
       final photo = await _imagePicker.pickImage(source: ImageSource.camera);
       if (photo == null) return;
-      await _sendImageFile(File(photo.path), mimeType: photo.mimeType);
+      if (!mounted) return;
+      setState(() {
+        _pendingImages.add(photo);
+        _isAttachmentMenuOpen = false;
+      });
     } catch (error) {
       if (!mounted) return;
       Get.snackbar('Error', 'Camera error: $error');
@@ -1619,12 +1646,14 @@ class _ChatScreenState extends State<ChatScreen> {
             children: [
               ClipRRect(
                 borderRadius: BorderRadius.circular(10),
-                child: Image.file(
-                  File(file.path),
-                  width: 60,
-                  height: 60,
-                  fit: BoxFit.cover,
-                ),
+                child: isVideo
+                    ? _VideoPreviewTile(file: file)
+                    : Image.file(
+                        File(file.path),
+                        width: 60,
+                        height: 60,
+                        fit: BoxFit.cover,
+                      ),
               ),
               if (isVideo)
                 const Positioned.fill(
@@ -1811,7 +1840,7 @@ class _ChatScreenState extends State<ChatScreen> {
     } else if (_isSameDay(date, now.subtract(const Duration(days: 1)))) {
       text = 'Yesterday';
     } else {
-      text = DateFormat.yMMMMd().format(date);
+      text = _dateHeaderFormat.format(date);
     }
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 12),
@@ -1852,6 +1881,37 @@ class _ChatScreenState extends State<ChatScreen> {
     _audioRecorder.closeRecorder();
     _scheduleTimer?.cancel();
     super.dispose();
+  }
+}
+
+class _VideoPreviewTile extends StatelessWidget {
+  const _VideoPreviewTile({required this.file});
+
+  final XFile file;
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<Uint8List?>(
+      future: generateVideoThumbnailBytesFromFile(file.path),
+      builder: (context, snapshot) {
+        final bytes = snapshot.data;
+        if (bytes != null && bytes.isNotEmpty) {
+          return Image.memory(bytes, width: 60, height: 60, fit: BoxFit.cover);
+        }
+
+        return Container(
+          width: 60,
+          height: 60,
+          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+          alignment: Alignment.center,
+          child: Icon(
+            Icons.videocam_outlined,
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+            size: 22,
+          ),
+        );
+      },
+    );
   }
 }
 

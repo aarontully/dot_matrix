@@ -22,6 +22,7 @@ import 'settings_screen.dart';
 import 'chat_screen.dart';
 import 'compose_screen.dart';
 import 'bridge_identities_screen.dart';
+import 'device_setup_screen.dart';
 import 'developer_access_screen.dart';
 import 'encryption_settings_screen.dart';
 import 'sessions_screen.dart';
@@ -65,12 +66,8 @@ class _HomeScreenState extends State<HomeScreen> {
             Expanded(
               child: switch (selectedTab) {
                 _HomeTab.chats => roomController.obx(
-                  (rooms) => Obx(
-                    () => _buildChatsTab(context, rooms ?? []),
-                  ),
-                  onLoading: const Center(
-                    child: DotMatrixLoader(),
-                  ),
+                  (rooms) => Obx(() => _buildChatsTab(context, rooms ?? [])),
+                  onLoading: const Center(child: DotMatrixLoader()),
                   onError: (error) => _buildErrorState(
                     context,
                     'We could not load your rooms yet.',
@@ -79,9 +76,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 _HomeTab.activity => roomController.obx(
                   (rooms) => _buildActivityTab(context, rooms ?? []),
-                  onLoading: const Center(
-                    child: DotMatrixLoader(),
-                  ),
+                  onLoading: const Center(child: DotMatrixLoader()),
                   onError: (error) => _buildErrorState(
                     context,
                     'We could not build your activity feed yet.',
@@ -208,8 +203,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   Text(
                     'Filter by Space',
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                   const SizedBox(height: 8),
                   _SpaceFilterTile(
@@ -453,7 +448,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                 imageUrl: avatarImageUrl,
                                 httpHeaders: {
                                   if (client.accessToken != null)
-                                    'Authorization': 'Bearer ${client.accessToken}',
+                                    'Authorization':
+                                        'Bearer ${client.accessToken}',
                                 },
                                 width: 56,
                                 height: 56,
@@ -547,7 +543,7 @@ class _HomeScreenState extends State<HomeScreen> {
               final settings = ctrl.state;
               if (settings == null ||
                   !settings.encryptionEnabled ||
-                  settings.encryptedHistoryReady) {
+                  !settings.needsDeviceSetup) {
                 return const SizedBox.shrink();
               }
 
@@ -574,7 +570,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           const SizedBox(width: 10),
                           Expanded(
                             child: Text(
-                              'Finish encrypted history setup',
+                              'Set up this device',
                               style: TextStyle(
                                 fontSize: 17,
                                 fontWeight: FontWeight.w700,
@@ -586,9 +582,12 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                       const SizedBox(height: 10),
                       Text(
-                        settings.secureBackupAvailable
+                        settings.needsEncryptedHistorySetup &&
+                                settings.needsDeviceVerification
+                            ? 'Finish recovery and trust setup in one place so this device feels fully ready.'
+                            : settings.needsEncryptedHistorySetup
                             ? 'This device is connected, but it still needs your backup keys to read older secure history smoothly.'
-                            : 'This device can chat securely, but older secure history may still depend on another trusted device sharing keys.',
+                            : 'This device can already read encrypted history, but it should still be verified as trusted.',
                         style: TextStyle(
                           color: cs.onTertiaryContainer.withValues(alpha: 0.88),
                           height: 1.4,
@@ -596,9 +595,9 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                       const SizedBox(height: 14),
                       FilledButton.icon(
-                        onPressed: () => _openEncryptionSettings(context),
-                        icon: const Icon(Icons.lock_outline),
-                        label: const Text('Open recovery tools'),
+                        onPressed: () => _openDeviceSetup(context),
+                        icon: const Icon(Icons.checklist_rtl_outlined),
+                        label: const Text('Open setup guide'),
                       ),
                     ],
                   ),
@@ -1037,8 +1036,7 @@ class _HomeScreenState extends State<HomeScreen> {
             return haystack.contains(normalizedQuery);
           }).toList();
 
-    final selectedSpaceId =
-        Get.find<RoomController>().selectedSpaceId.value;
+    final selectedSpaceId = Get.find<RoomController>().selectedSpaceId.value;
     if (selectedSpaceId != null) {
       filteredRooms = filteredRooms
           .where((r) => r.spaceParentIds.contains(selectedSpaceId))
@@ -1233,7 +1231,8 @@ class _HomeScreenState extends State<HomeScreen> {
       );
       if (!isBridgeBot) {
         final client = Get.find<AuthController>().client;
-        final alsoMe = Get.find<SettingsController>().state?.alsoMeUserIds ?? [];
+        final alsoMe =
+            Get.find<SettingsController>().state?.alsoMeUserIds ?? [];
         if (latestEvent.senderId == client.userID ||
             alsoMe.contains(latestEvent.senderId)) {
           return text;
@@ -1271,8 +1270,8 @@ class _HomeScreenState extends State<HomeScreen> {
     if (settings == null) {
       return 'Secure Backup and room keys';
     }
-    if (settings.encryptionEnabled && !settings.encryptedHistoryReady) {
-      return 'Finish encrypted history recovery';
+    if (settings.needsDeviceSetup) {
+      return 'Finish setup for this device';
     }
     return settings.encryptionEnabled ? 'Enabled' : 'Unavailable';
   }
@@ -1296,6 +1295,13 @@ class _HomeScreenState extends State<HomeScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => const EncryptionSettingsScreen()),
+    );
+  }
+
+  void _openDeviceSetup(BuildContext context) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const DeviceSetupScreen()),
     );
   }
 
@@ -1326,7 +1332,6 @@ class _HomeScreenState extends State<HomeScreen> {
       MaterialPageRoute(builder: (_) => const AppSettingsScreen()),
     );
   }
-
 }
 
 class _SpaceFilterTile extends StatelessWidget {

@@ -9,6 +9,8 @@ import 'package:path_provider/path_provider.dart';
 
 import '../services/push_notification_service.dart';
 import '../utils/avatar_url_resolver.dart';
+import '../screens/device_setup_screen.dart';
+import 'room_controller.dart';
 import 'settings_controller.dart';
 import '../widgets/device_verification_dialog.dart';
 
@@ -23,6 +25,7 @@ class AuthController extends GetxController with StateMixin<String?> {
   final FlutterSecureStorage _storage = const FlutterSecureStorage();
   Client _client = Client('Dot Matrix');
   StreamSubscription? _verificationSubscription;
+  bool _postLoginFlowInProgress = false;
 
   Client get client => _client;
 
@@ -207,9 +210,10 @@ class AuthController extends GetxController with StateMixin<String?> {
       );
 
       clearBrokenAvatarSources();
+      _setupVerificationListener();
       await _maybeRegisterPusher();
       change(loginResponse.userId, status: RxStatus.success());
-      await _maybePromptDeviceVerification();
+      await _runFreshLoginOnboarding();
     } catch (error) {
       change(null, status: RxStatus.error(error.toString()));
     }
@@ -217,16 +221,16 @@ class AuthController extends GetxController with StateMixin<String?> {
 
   void _setupVerificationListener() {
     _verificationSubscription?.cancel();
-    _verificationSubscription = _client.onKeyVerificationRequest.stream.listen(
-      (request) {
-        request.onUpdate = () {
-          if (request.isDone) {
-            request.onUpdate = null;
-          }
-        };
-        Get.dialog(DeviceVerificationDialog(request: request));
-      },
-    );
+    _verificationSubscription = _client.onKeyVerificationRequest.stream.listen((
+      request,
+    ) {
+      request.onUpdate = () {
+        if (request.isDone) {
+          request.onUpdate = null;
+        }
+      };
+      Get.dialog(DeviceVerificationDialog(request: request));
+    });
   }
 
   Future<void> persistDeviceName(String deviceName) async {
@@ -262,7 +266,47 @@ class AuthController extends GetxController with StateMixin<String?> {
     }
   }
 
-  Future<void> _maybePromptDeviceVerification() async {
+  Future<void> _runFreshLoginOnboarding() async {
+    if (_postLoginFlowInProgress) return;
+    _postLoginFlowInProgress = true;
+
+    try {
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+
+      final settingsController = Get.find<SettingsController>();
+      await settingsController.refreshSettings();
+
+      final settings = settingsController.state;
+      if (settings != null && settings.needsDeviceSetup) {
+        await Get.to(
+          () => const DeviceSetupScreen(launchedFromOnboarding: true),
+          preventDuplicates: false,
+        );
+      }
+    } finally {
+      _postLoginFlowInProgress = false;
+    }
+  }
+
+  Future<void> _showInfoDialog({
+    required String title,
+    required String message,
+  }) async {
+    await Get.dialog<void>(
+      AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          FilledButton(onPressed: () => Get.back(), child: const Text('OK')),
+        ],
+      ),
+      barrierDismissible: false,
+    );
+  }
+
+  Future<void> _maybePromptDeviceVerification({
+    bool showUnavailableInfo = false,
+  }) async {
     try {
       final encryption = _client.encryption;
       if (encryption == null) return;
@@ -277,12 +321,22 @@ class AuthController extends GetxController with StateMixin<String?> {
       final currentDeviceKey = ownKeys?.deviceKeys[_client.deviceID];
       if (currentDeviceKey?.verified == true) return;
 
-      final otherKeys = ownKeys?.deviceKeys.values
+      final otherKeys =
+          ownKeys?.deviceKeys.values
               .where((dk) => dk.deviceId != _client.deviceID)
               .toList() ??
           [];
 
-      if (otherKeys.isEmpty) return;
+      if (otherKeys.isEmpty) {
+        if (showUnavailableInfo) {
+          await _showInfoDialog(
+            title: 'Verify this device',
+            message:
+                'No other signed-in devices were found for this account, so there is nothing to verify against yet.',
+          );
+        }
+        return;
+      }
 
       final hasVerified = await Get.dialog<bool>(
         AlertDialog(
@@ -312,6 +366,13 @@ class AuthController extends GetxController with StateMixin<String?> {
         barrierDismissible: false,
         DeviceVerificationDialog(request: request),
       );
+
+      if (request.state == KeyVerificationState.done) {
+        await encryption.ssss.maybeRequestAll();
+        await Get.find<RoomController>().requestMissingEncryptionKeys();
+        await Get.find<RoomController>().refreshRooms(rebuildTimelines: true);
+        await Get.find<SettingsController>().refreshSettings();
+      }
     } catch (_) {
       // Best effort prompt.
     }

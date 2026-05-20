@@ -2,10 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:dot_matrix/widgets/dot_matrix_loader.dart';
 import 'package:get/get.dart';
 
-import '../controllers/auth_controller.dart';
-import '../controllers/room_controller.dart';
 import '../controllers/settings_controller.dart';
 import '../models/settings_state.dart';
+import 'device_setup_screen.dart';
 import '../theme/app_theme.dart';
 import '../widgets/device_verification_dialog.dart';
 
@@ -83,7 +82,7 @@ class _EncryptionSettingsScreenState extends State<EncryptionSettingsScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (settings.encryptionEnabled && !settings.encryptedHistoryReady) ...[
+            if (settings.needsDeviceSetup) ...[
               _buildRecoveryNudge(settings),
               const SizedBox(height: 16),
             ],
@@ -108,6 +107,12 @@ class _EncryptionSettingsScreenState extends State<EncryptionSettingsScreen> {
                     settings.encryptedHistoryReady
                         ? 'Ready on this device'
                         : 'Needs recovery',
+                  ),
+                  _buildInfoRow(
+                    'This device',
+                    settings.isCurrentDeviceVerified
+                        ? 'Verified'
+                        : 'Needs verification',
                   ),
                   _buildInfoRow(
                     'Encryption',
@@ -141,6 +146,20 @@ class _EncryptionSettingsScreenState extends State<EncryptionSettingsScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const DeviceSetupScreen(),
+                        ),
+                      ),
+                      icon: const Icon(Icons.checklist_rtl_outlined),
+                      label: const Text('Open setup guide'),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
                   TextField(
                     controller: _encryptionRecoveryController,
                     enabled: !settings.isRestoringEncryption,
@@ -221,7 +240,7 @@ class _EncryptionSettingsScreenState extends State<EncryptionSettingsScreen> {
               SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  'Finish encrypted history setup',
+                  'Set up this device',
                   style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
                 ),
               ),
@@ -229,9 +248,12 @@ class _EncryptionSettingsScreenState extends State<EncryptionSettingsScreen> {
           ),
           const SizedBox(height: 10),
           Text(
-            settings.secureBackupAvailable
+            settings.needsEncryptedHistorySetup &&
+                    settings.needsDeviceVerification
+                ? 'Finish recovery and trust setup in one place so this device can read older encrypted chats smoothly.'
+                : settings.needsEncryptedHistorySetup
                 ? 'This device can send and receive encrypted messages, but it still needs your backup keys to read older secure history smoothly.'
-                : 'This device can send and receive encrypted messages, but older secure history may still depend on another trusted device sharing keys.',
+                : 'This device can already read encrypted history, but it still should be verified as a trusted device.',
             style: TextStyle(
               color: theme.colorScheme.onSurface.withValues(alpha: 0.78),
               height: 1.4,
@@ -243,20 +265,12 @@ class _EncryptionSettingsScreenState extends State<EncryptionSettingsScreen> {
             runSpacing: 10,
             children: [
               FilledButton.icon(
-                onPressed: settings.isRestoringEncryption
-                    ? null
-                    : _verifyDevice,
-                icon: const Icon(Icons.verified_user_outlined),
-                label: const Text('Verify Device'),
-              ),
-              OutlinedButton.icon(
-                onPressed: () =>
-                    _encryptionRecoveryController.selection = TextSelection(
-                      baseOffset: 0,
-                      extentOffset: _encryptionRecoveryController.text.length,
-                    ),
-                icon: const Icon(Icons.lock_open_outlined),
-                label: const Text('Use backup below'),
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const DeviceSetupScreen()),
+                ),
+                icon: const Icon(Icons.checklist_rtl_outlined),
+                label: const Text('Open setup guide'),
               ),
             ],
           ),
@@ -346,7 +360,12 @@ class _EncryptionSettingsScreenState extends State<EncryptionSettingsScreen> {
           .restoreEncryptedHistory(_encryptionRecoveryController.text);
       _encryptionRecoveryController.clear();
       if (!mounted) return;
-      Get.snackbar('', message, snackPosition: SnackPosition.BOTTOM, duration: const Duration(seconds: 2));
+      Get.snackbar(
+        '',
+        message,
+        snackPosition: SnackPosition.BOTTOM,
+        duration: const Duration(seconds: 2),
+      );
     } catch (error) {
       if (!mounted) return;
       _showError(error);
@@ -365,13 +384,7 @@ class _EncryptionSettingsScreenState extends State<EncryptionSettingsScreen> {
       );
       if (!mounted) return;
 
-      final client = Get.find<AuthController>().client;
-      final encryption = client.encryption;
-      if (encryption != null) {
-        await encryption.ssss.maybeRequestAll();
-      }
-      await Get.find<RoomController>().requestMissingEncryptionKeys();
-      await Get.find<SettingsController>().refreshSettings();
+      await Get.find<SettingsController>().refreshAfterDeviceVerification();
     } catch (error) {
       if (!mounted) return;
       _showError(error);

@@ -36,6 +36,8 @@ enum MessageAction {
 }
 
 class MessageBubble extends StatelessWidget {
+  static final DateFormat _timeFormat = DateFormat.jm();
+
   const MessageBubble({
     super.key,
     required this.event,
@@ -59,101 +61,6 @@ class MessageBubble extends StatelessWidget {
   final void Function(String eventId)? onReplyTap;
   final void Function(MessageAction action, AppEvent event, {String? reaction})?
   onAction;
-
-  bool get _isVisualMedia {
-    final renderEvent = event.displayEvent;
-    final type = renderEvent.messageType;
-    if (type == MessageTypes.Image ||
-        type == MessageTypes.Video ||
-        type == MessageTypes.Sticker) {
-      return true;
-    }
-    final hasUrl =
-        renderEvent.content['url'] is String ||
-        renderEvent.content['file'] is Map;
-    if (type == MessageTypes.File || hasUrl) {
-      final info = renderEvent.content['info'];
-      if (info is Map) {
-        final mime = (info['mimetype'] as String?)?.toLowerCase() ?? '';
-        if (mime.startsWith('image/') || mime.startsWith('video/')) return true;
-      }
-    }
-    // Check processed body and raw content fields; some bridges use
-    // custom msgtypes that don't hit the first check above.
-    final candidates = [
-      event.body,
-      renderEvent.content['body'],
-      renderEvent.content['filename'],
-      renderEvent.content['name'],
-    ].whereType<String>().map((s) => s.toLowerCase().trim());
-
-    for (final text in candidates) {
-      if (text.endsWith('.jpg') ||
-          text.endsWith('.jpeg') ||
-          text.endsWith('.png') ||
-          text.endsWith('.gif') ||
-          text.endsWith('.webp') ||
-          text.endsWith('.bmp') ||
-          text.endsWith('.heic') ||
-          text.endsWith('.mp4') ||
-          text.endsWith('.mov') ||
-          text.endsWith('.avi') ||
-          text.endsWith('.mkv') ||
-          text.endsWith('.webm')) {
-        return true;
-      }
-      if (RegExp(
-        r'\.\s*(?:jpg|jpeg|png|gif|webp|bmp|heic|mp4|mov|avi|mkv|webm)\b',
-      ).hasMatch(text)) {
-        return true;
-      }
-      if (RegExp(
-        r'https?://[^\s]+\.(?:jpg|jpeg|png|gif|webp|bmp|heic|mp4|mov|avi|mkv|webm)',
-      ).hasMatch(text)) {
-        return true;
-      }
-    }
-    // Brute-force: some bridges stash the filename or URL in an arbitrary key.
-    final extPattern = RegExp(
-      r'\.(?:jpg|jpeg|png|gif|webp|bmp|heic|mp4|mov|avi|mkv|webm)\b',
-    );
-    final urlPattern = RegExp(
-      r'https?://[^\s<>"{}|\\^`\[\]]+\.(?:jpg|jpeg|png|gif|webp|bmp|heic|mp4|mov|avi|mkv|webm)',
-    );
-    for (final value in renderEvent.content.values) {
-      if (value is String) {
-        final v = value.toLowerCase();
-        if (extPattern.hasMatch(v) || urlPattern.hasMatch(v)) {
-          return true;
-        }
-      } else if (value is Map) {
-        for (final nested in value.values) {
-          if (nested is String) {
-            final v = nested.toLowerCase();
-            if (extPattern.hasMatch(v) || urlPattern.hasMatch(v)) {
-              return true;
-            }
-          }
-        }
-      }
-    }
-    // Some bridges (e.g. Google Messages) embed image bytes in base64.
-    final rawDebug = renderEvent.content['fi.mau.gmessages.raw_debug_data'];
-    if (rawDebug is String && rawDebug.isNotEmpty) {
-      if (rawDebug.contains('/9j/') ||
-          rawDebug.contains('iVBORw0KGgo') ||
-          rawDebug.contains('R0lGOD') ||
-          rawDebug.contains('UklGR')) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  bool get _isAudio {
-    final type = event.displayEvent.messageType;
-    return type == MessageTypes.Audio;
-  }
 
   bool get _isRedacted => event.rawEvent.redactedBecause != null;
 
@@ -223,13 +130,8 @@ class MessageBubble extends StatelessWidget {
   Widget _buildContent(BuildContext context, _BubbleFill bubbleFill) {
     final replyRef = _buildReplyReference(bubbleFill);
 
-    debugPrint(
-      '[MessageBubble._buildContent] eventId=${event.rawEvent.eventId} '
-      'msgtype=${event.displayEvent.messageType} body="${event.body}" '
-      '_isVisualMedia=$_isVisualMedia _isAudio=$_isAudio',
-    );
-
-    if (_isVisualMedia) {
+    if (event.isVisualMedia) {
+      final caption = event.mediaCaption;
       final media = ClipRRect(
         borderRadius: _borderRadius(),
         child: _MediaAttachmentBubble(
@@ -239,18 +141,31 @@ class MessageBubble extends StatelessWidget {
               _showFullScreenImage(context, provider, bytes: bytes, url: url),
         ),
       );
-      if (replyRef == null) return media;
+      if (replyRef == null && caption == null) return media;
       return Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Padding(padding: const EdgeInsets.only(bottom: 4), child: replyRef),
+          if (replyRef != null)
+            Padding(padding: const EdgeInsets.only(bottom: 4), child: replyRef),
           media,
+          if (caption != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(6, 8, 6, 0),
+              child: Text(
+                caption,
+                style: TextStyle(
+                  color: bubbleFill.textColor,
+                  fontSize: 14,
+                  height: 1.3,
+                ),
+              ),
+            ),
         ],
       );
     }
 
-    if (_isAudio) {
+    if (event.isAudio) {
       final audio = _AudioAttachmentBubble(
         event: event,
         textColor: bubbleFill.textColor,
@@ -328,7 +243,7 @@ class MessageBubble extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    DateFormat.jm().format(event.originServerTs),
+                    _timeFormat.format(event.originServerTs),
                     style: TextStyle(
                       fontSize: 10,
                       color: bubbleFill.textColor.withValues(alpha: 0.5),
@@ -964,7 +879,10 @@ class MessageBubble extends StatelessWidget {
                     onAction?.call(MessageAction.forward, event);
                   },
                 ),
-                if (isMe && !_isRedacted && !_isVisualMedia && !_isAudio)
+                if (isMe &&
+                    !_isRedacted &&
+                    !event.isVisualMedia &&
+                    !event.isAudio)
                   _ActionButton(
                     icon: Icons.edit_outlined,
                     label: 'Edit',
@@ -1994,16 +1912,6 @@ class _MediaAttachmentBubbleState extends State<_MediaAttachmentBubble> {
   double? _bridgeImageHeight;
   bool _usedBridgeFallback = false;
 
-  int _countOccurrences(String haystack, String needle) {
-    var count = 0;
-    var index = haystack.indexOf(needle);
-    while (index != -1) {
-      count++;
-      index = haystack.indexOf(needle, index + 1);
-    }
-    return count;
-  }
-
   /// Some bridges (e.g. Google Messages) embed the image as base64 inside
   /// a custom content key rather than using an mxc URL.
   Future<Uint8List?> _extractBridgeImageBytes(
@@ -2047,15 +1955,7 @@ class _MediaAttachmentBubbleState extends State<_MediaAttachmentBubble> {
         }
       }
 
-      if (bestBytes != null) {
-        debugPrint(
-          '[_MediaAttachmentBubble.bridge] eventId=${widget.event.rawEvent.eventId} '
-          'candidates=${candidateStarts.length} '
-          'gifMarkers=${_countOccurrences(rawDebug, 'R0lGOD')} '
-          'pickedArea=$bestArea pickedBytes=$bestLength',
-        );
-        return bestBytes;
-      }
+      if (bestBytes != null) return bestBytes;
 
       return base64Decode(rawDebug);
     } catch (_) {
@@ -2164,13 +2064,6 @@ class _MediaAttachmentBubbleState extends State<_MediaAttachmentBubble> {
     try {
       final client = Get.find<AuthController>().client;
       final ev = _renderEvent;
-
-      debugPrint(
-        '[_MediaAttachmentBubble] eventId=${widget.event.rawEvent.eventId} '
-        'renderEventId=${ev.eventId} '
-        'type=${ev.type} msgtype=${ev.messageType} '
-        'content=${ev.content}',
-      );
 
       final primaryUrl = _findAttachmentUrl(ev);
       final looseUrl = _isGoogleMessagesBridgeEvent(ev)

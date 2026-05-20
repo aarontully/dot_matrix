@@ -47,14 +47,16 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
       box.get(_chatSortOrderKey) as String?,
     );
     final customColorValue = box.get(_customPrimaryColorKey) as int?;
-    final customPrimaryColor =
-        customColorValue != null ? Color(customColorValue) : null;
+    final customPrimaryColor = customColorValue != null
+        ? Color(customColorValue)
+        : null;
     Get.changeThemeMode(appearance.themeMode);
     final notificationsEnabled = (box.get(_notificationsKey) as bool?) ?? true;
     final pushGatewayUrl = box.get(_pushGatewayUrlKey) as String?;
     final encryptMessages = (box.get(_encryptMessagesKey) as bool?) ?? true;
     final alsoMeRaw = box.get(_alsoMeUserIdsKey) as List<dynamic>?;
-    final alsoMeUserIds = alsoMeRaw?.cast<String>().toList() ?? const <String>[];
+    final alsoMeUserIds =
+        alsoMeRaw?.cast<String>().toList() ?? const <String>[];
     if (auth.state == null || client.userID == null) {
       change(null, status: RxStatus.success());
       return;
@@ -92,6 +94,34 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
       final encryptedHistoryReady = encryption == null
           ? false
           : await encryption.keyManager.isCached();
+      var isCurrentDeviceVerified = false;
+      var hasOtherDeviceSessions = false;
+      var hasOtherVerifiedDeviceSessions = false;
+
+      if (encryption != null &&
+          client.deviceID != null &&
+          client.deviceID!.isNotEmpty) {
+        try {
+          await client.updateUserDeviceKeys(additionalUsers: {userId});
+          await client.userDeviceKeysLoading;
+          final ownKeys = client.userDeviceKeys[userId];
+          final currentDeviceKey = ownKeys?.deviceKeys[client.deviceID];
+          isCurrentDeviceVerified = currentDeviceKey?.verified == true;
+          final otherDeviceKeys =
+              ownKeys?.deviceKeys.values
+                  .where((dk) => dk.deviceId != client.deviceID)
+                  .toList() ??
+              const [];
+          hasOtherDeviceSessions = otherDeviceKeys.isNotEmpty;
+          hasOtherVerifiedDeviceSessions = otherDeviceKeys.any(
+            (dk) => dk.verified,
+          );
+        } catch (_) {
+          isCurrentDeviceVerified = false;
+          hasOtherDeviceSessions = false;
+          hasOtherVerifiedDeviceSessions = false;
+        }
+      }
 
       change(
         SettingsState(
@@ -119,6 +149,9 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
           secureBackupAvailable: secureBackupAvailable,
           keyBackupEnabled: keyBackupEnabled,
           encryptedHistoryReady: encryptedHistoryReady,
+          isCurrentDeviceVerified: isCurrentDeviceVerified,
+          hasOtherDeviceSessions: hasOtherDeviceSessions,
+          hasOtherVerifiedDeviceSessions: hasOtherVerifiedDeviceSessions,
           customPrimaryColor: customPrimaryColor,
           alsoMeUserIds: alsoMeUserIds,
         ),
@@ -212,10 +245,7 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
       );
     } else {
       await box.put(_pushGatewayUrlKey, url);
-      change(
-        current.copyWith(pushGatewayUrl: url),
-        status: RxStatus.success(),
-      );
+      change(current.copyWith(pushGatewayUrl: url), status: RxStatus.success());
     }
 
     final auth = Get.find<AuthController>();
@@ -236,10 +266,7 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
     if (!list.contains(trimmed)) {
       list.add(trimmed);
       await box.put(_alsoMeUserIdsKey, list);
-      change(
-        current.copyWith(alsoMeUserIds: list),
-        status: RxStatus.success(),
-      );
+      change(current.copyWith(alsoMeUserIds: list), status: RxStatus.success());
     }
   }
 
@@ -251,10 +278,7 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
     final list = List<String>.from(current.alsoMeUserIds);
     if (list.remove(userId)) {
       await box.put(_alsoMeUserIdsKey, list);
-      change(
-        current.copyWith(alsoMeUserIds: list),
-        status: RxStatus.success(),
-      );
+      change(current.copyWith(alsoMeUserIds: list), status: RxStatus.success());
     }
   }
 
@@ -706,13 +730,13 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
 
       final ownKeys = userId != null ? client.userDeviceKeys[userId] : null;
       final currentDeviceId = client.deviceID;
-      final otherDevices = ownKeys?.deviceKeys.values
+      final otherDevices =
+          ownKeys?.deviceKeys.values
               .where((dk) => dk.deviceId != currentDeviceId)
               .toList() ??
           [];
       final hasOtherDevice = otherDevices.isNotEmpty;
-      final hasOtherVerifiedDevice =
-          otherDevices.any((dk) => dk.verified);
+      final hasOtherVerifiedDevice = otherDevices.any((dk) => dk.verified);
 
       debugPrint(
         '[KeyRequest] currentDevice=$currentDeviceId totalOthers=${otherDevices.length} verifiedOthers=${otherDevices.where((dk) => dk.verified).length}',
@@ -741,7 +765,9 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
 
       await encryption.ssss.maybeRequestAll();
       await Get.find<RoomController>().requestMissingEncryptionKeys();
-      debugPrint('[KeyRequest] Sent requests via ssss.maybeRequestAll and roomController.requestMissingEncryptionKeys');
+      debugPrint(
+        '[KeyRequest] Sent requests via ssss.maybeRequestAll and roomController.requestMissingEncryptionKeys',
+      );
       await refreshSettings();
       final refreshed = state;
       if (refreshed != null) {
@@ -760,6 +786,17 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
     }
   }
 
+  Future<void> refreshAfterDeviceVerification() async {
+    final client = Get.find<AuthController>().client;
+    final encryption = client.encryption;
+    if (encryption != null) {
+      await encryption.ssss.maybeRequestAll();
+    }
+    await Get.find<RoomController>().requestMissingEncryptionKeys();
+    await Get.find<RoomController>().refreshRooms(rebuildTimelines: true);
+    await refreshSettings();
+  }
+
   Future<KeyVerification> startDeviceVerification() async {
     final client = Get.find<AuthController>().client;
     final encryption = client.encryption;
@@ -775,7 +812,8 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
     await client.userDeviceKeysLoading;
 
     final ownKeys = client.userDeviceKeys[userId];
-    final otherKeys = ownKeys?.deviceKeys.values
+    final otherKeys =
+        ownKeys?.deviceKeys.values
             .where((dk) => dk.deviceId != client.deviceID)
             .toList() ??
         [];

@@ -1,6 +1,118 @@
 import 'package:matrix/matrix.dart';
 import '../utils/bridge_detector.dart';
 
+final RegExp _mediaExtensionPattern = RegExp(
+  r'\.(?:jpg|jpeg|png|gif|webp|bmp|heic|mp4|mov|avi|mkv|webm)\b',
+);
+final RegExp _mediaFilenamePattern = RegExp(
+  r'^[^\n]+\.(?:jpg|jpeg|png|gif|webp|bmp|heic|mp4|mov|avi|mkv|webm)$',
+  caseSensitive: false,
+);
+final RegExp _mediaUrlPattern = RegExp(
+  r'https?://[^\s<>"{}|\\^`\[\]]+\.(?:jpg|jpeg|png|gif|webp|bmp|heic|mp4|mov|avi|mkv|webm)',
+);
+
+bool _eventHasVisualMedia(Event renderEvent, String body) {
+  final type = renderEvent.messageType;
+  if (type == MessageTypes.Image ||
+      type == MessageTypes.Video ||
+      type == MessageTypes.Sticker) {
+    return true;
+  }
+
+  final hasUrl =
+      renderEvent.content['url'] is String ||
+      renderEvent.content['file'] is Map;
+  if (type == MessageTypes.File || hasUrl) {
+    final info = renderEvent.content['info'];
+    if (info is Map) {
+      final mime = (info['mimetype'] as String?)?.toLowerCase() ?? '';
+      if (mime.startsWith('image/') || mime.startsWith('video/')) return true;
+    }
+  }
+
+  final candidates = [
+    body,
+    renderEvent.content['body'],
+    renderEvent.content['filename'],
+    renderEvent.content['name'],
+  ].whereType<String>().map((s) => s.toLowerCase().trim());
+
+  for (final text in candidates) {
+    if (_mediaExtensionPattern.hasMatch(text) ||
+        _mediaUrlPattern.hasMatch(text)) {
+      return true;
+    }
+  }
+
+  for (final value in renderEvent.content.values) {
+    if (value is String) {
+      final normalized = value.toLowerCase();
+      if (_mediaExtensionPattern.hasMatch(normalized) ||
+          _mediaUrlPattern.hasMatch(normalized)) {
+        return true;
+      }
+    } else if (value is Map) {
+      for (final nested in value.values) {
+        if (nested is String) {
+          final normalized = nested.toLowerCase();
+          if (_mediaExtensionPattern.hasMatch(normalized) ||
+              _mediaUrlPattern.hasMatch(normalized)) {
+            return true;
+          }
+        }
+      }
+    }
+  }
+
+  final rawDebug = renderEvent.content['fi.mau.gmessages.raw_debug_data'];
+  if (rawDebug is String && rawDebug.isNotEmpty) {
+    if (rawDebug.contains('/9j/') ||
+        rawDebug.contains('iVBORw0KGgo') ||
+        rawDebug.contains('R0lGOD') ||
+        rawDebug.contains('UklGR')) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+String? _eventMediaCaption(Event renderEvent, String body, bool isVisualMedia) {
+  if (!isVisualMedia) return null;
+
+  final trimmedBody = body.trim();
+  if (trimmedBody.isEmpty ||
+      trimmedBody == 'Waiting for room key...' ||
+      trimmedBody == 'Encrypted message') {
+    return null;
+  }
+
+  final normalized = trimmedBody.toLowerCase();
+  final filenameCandidates = <String>{
+    for (final value in [
+      renderEvent.content['filename'],
+      renderEvent.content['name'],
+    ])
+      if (value is String && value.trim().isNotEmpty)
+        value.trim().toLowerCase(),
+  };
+
+  if (filenameCandidates.contains(normalized) ||
+      _mediaFilenamePattern.hasMatch(trimmedBody)) {
+    return null;
+  }
+
+  return trimmedBody;
+}
+
+bool _eventIsWaitingForRoomKey(Event renderEvent, String body) {
+  if (renderEvent.messageType == MessageTypes.BadEncrypted) {
+    return renderEvent.content['can_request_session'] == true;
+  }
+  return body == 'Waiting for room key...';
+}
+
 class AppReactionActivity {
   final String senderId;
   final String? senderName;
@@ -84,6 +196,10 @@ class AppEvent {
 
   /// Whether this message has been edited.
   final bool isEdited;
+  final bool isVisualMedia;
+  final bool isAudio;
+  final String? mediaCaption;
+  final bool isWaitingForRoomKey;
 
   AppEvent({
     required this.senderId,
@@ -98,5 +214,26 @@ class AppEvent {
     this.myReactions = const {},
     this.reactionSenders = const {},
     this.isEdited = false,
-  }) : displayEvent = displayEvent ?? rawEvent;
+    bool? isVisualMedia,
+    bool? isAudio,
+    String? mediaCaption,
+    bool? isWaitingForRoomKey,
+  }) : displayEvent = displayEvent ?? rawEvent,
+       isVisualMedia =
+           isVisualMedia ??
+           _eventHasVisualMedia(displayEvent ?? rawEvent, body),
+       isAudio =
+           isAudio ??
+           (displayEvent ?? rawEvent).messageType == MessageTypes.Audio,
+       mediaCaption =
+           mediaCaption ??
+           _eventMediaCaption(
+             displayEvent ?? rawEvent,
+             body,
+             isVisualMedia ??
+                 _eventHasVisualMedia(displayEvent ?? rawEvent, body),
+           ),
+       isWaitingForRoomKey =
+           isWaitingForRoomKey ??
+           _eventIsWaitingForRoomKey(displayEvent ?? rawEvent, body);
 }

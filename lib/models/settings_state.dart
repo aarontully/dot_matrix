@@ -68,6 +68,9 @@ class SettingsState {
     required this.secureBackupAvailable,
     required this.keyBackupEnabled,
     required this.encryptedHistoryReady,
+    required this.isCurrentDeviceVerified,
+    required this.hasOtherDeviceSessions,
+    required this.hasOtherVerifiedDeviceSessions,
     required this.encryptMessages,
     this.avatarUrl,
     this.isSavingProfile = false,
@@ -93,12 +96,38 @@ class SettingsState {
   final bool secureBackupAvailable;
   final bool keyBackupEnabled;
   final bool encryptedHistoryReady;
+  final bool isCurrentDeviceVerified;
+  final bool hasOtherDeviceSessions;
+  final bool hasOtherVerifiedDeviceSessions;
   final bool encryptMessages;
   final bool isSavingProfile;
   final bool isUploadingAvatar;
   final bool isRestoringEncryption;
   final Color? customPrimaryColor;
   final List<String> alsoMeUserIds;
+
+  bool get needsEncryptedHistorySetup =>
+      encryptionEnabled && !encryptedHistoryReady;
+
+  bool get needsDeviceVerification =>
+      encryptionEnabled && !isCurrentDeviceVerified;
+
+  bool get needsDeviceSetup =>
+      encryptionEnabled &&
+      (needsEncryptedHistorySetup || needsDeviceVerification);
+
+  int get totalDeviceSetupSteps => encryptionEnabled ? 2 : 0;
+
+  int get completedDeviceSetupSteps {
+    if (!encryptionEnabled) return 0;
+    var completed = 0;
+    if (encryptedHistoryReady) completed++;
+    if (isCurrentDeviceVerified) completed++;
+    return completed;
+  }
+
+  int get remainingDeviceSetupSteps =>
+      totalDeviceSetupSteps - completedDeviceSetupSteps;
 
   String get initials {
     final source = displayName.trim().isNotEmpty ? displayName.trim() : userId;
@@ -132,6 +161,9 @@ class SettingsState {
     bool? secureBackupAvailable,
     bool? keyBackupEnabled,
     bool? encryptedHistoryReady,
+    bool? isCurrentDeviceVerified,
+    bool? hasOtherDeviceSessions,
+    bool? hasOtherVerifiedDeviceSessions,
     bool? encryptMessages,
     bool? isSavingProfile,
     bool? isUploadingAvatar,
@@ -149,7 +181,9 @@ class SettingsState {
       deviceId: deviceId ?? this.deviceId,
       deviceName: deviceName ?? this.deviceName,
       notificationsEnabled: notificationsEnabled ?? this.notificationsEnabled,
-      pushGatewayUrl: clearPushGatewayUrl ? null : pushGatewayUrl ?? this.pushGatewayUrl,
+      pushGatewayUrl: clearPushGatewayUrl
+          ? null
+          : pushGatewayUrl ?? this.pushGatewayUrl,
       activeStatusEnabled: activeStatusEnabled ?? this.activeStatusEnabled,
       appearance: appearance ?? this.appearance,
       chatSortOrder: chatSortOrder ?? this.chatSortOrder,
@@ -159,6 +193,12 @@ class SettingsState {
       keyBackupEnabled: keyBackupEnabled ?? this.keyBackupEnabled,
       encryptedHistoryReady:
           encryptedHistoryReady ?? this.encryptedHistoryReady,
+      isCurrentDeviceVerified:
+          isCurrentDeviceVerified ?? this.isCurrentDeviceVerified,
+      hasOtherDeviceSessions:
+          hasOtherDeviceSessions ?? this.hasOtherDeviceSessions,
+      hasOtherVerifiedDeviceSessions:
+          hasOtherVerifiedDeviceSessions ?? this.hasOtherVerifiedDeviceSessions,
       encryptMessages: encryptMessages ?? this.encryptMessages,
       isSavingProfile: isSavingProfile ?? this.isSavingProfile,
       isUploadingAvatar: isUploadingAvatar ?? this.isUploadingAvatar,
