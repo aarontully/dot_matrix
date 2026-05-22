@@ -9,7 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_linkify/flutter_linkify.dart';
 import 'package:intl/intl.dart';
 import 'package:get/get.dart';
-import 'package:just_audio/just_audio.dart';
+import 'package:audioplayers/audioplayers.dart';
 import 'package:matrix/matrix.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:path_provider/path_provider.dart';
@@ -2820,23 +2820,20 @@ class _AudioAttachmentBubbleState extends State<_AudioAttachmentBubble> {
   }
 
   void _subscribeToPlayer() {
-    _player.positionStream.listen((pos) {
+    _player.onPositionChanged.listen((pos) {
       if (mounted) setState(() => _position = pos);
     });
-    _player.durationStream.listen((dur) {
-      if (mounted && dur != null) setState(() => _duration = dur);
+    _player.onDurationChanged.listen((dur) {
+      if (mounted) setState(() => _duration = dur);
     });
-    _player.playerStateStream.listen((state) {
+    _player.onPlayerStateChanged.listen((state) {
       if (!mounted) return;
-      setState(() => _isPlaying = state.playing);
+      setState(() => _isPlaying = state == PlayerState.playing);
     });
-    _player.processingStateStream.listen((state) {
+    _player.onPlayerComplete.listen((_) {
       if (!mounted) return;
-      if (state == ProcessingState.completed) {
-        _player.pause();
-        _player.seek(Duration.zero);
-        setState(() => _isPlaying = false);
-      }
+      _player.seek(Duration.zero);
+      setState(() => _isPlaying = false);
     });
   }
 
@@ -2896,7 +2893,7 @@ class _AudioAttachmentBubbleState extends State<_AudioAttachmentBubble> {
     final tempFile = File('${tempDir.path}/audio_${ev.eventId}$ext');
     await tempFile.writeAsBytes(file.bytes);
 
-    await _player.setAudioSource(AudioSource.uri(Uri.file(tempFile.path)));
+    await _player.setSource(DeviceFileSource(tempFile.path));
     if (mounted) setState(() => _isLoading = false);
   }
 
@@ -2915,16 +2912,25 @@ class _AudioAttachmentBubbleState extends State<_AudioAttachmentBubble> {
     final mxcUri = Uri.parse(mxc);
     final url = withMatrixMediaAllowRedirect(
       mxcToClientV1MediaDownload(mxcUri, client),
-    ).toString();
+    );
 
     final headers = <String, String>{};
     if (client.accessToken != null) {
       headers['Authorization'] = 'Bearer ${client.accessToken}';
     }
 
-    await _player.setAudioSource(
-      AudioSource.uri(Uri.parse(url), headers: headers),
+    final res = await client.httpClient.get(url, headers: headers);
+    final bytes = res.bodyBytes;
+
+    final tempDir = await getTemporaryDirectory();
+    final info = ev.content['info'];
+    final ext = _extensionFromMimetype(
+      info is Map ? info['mimetype'] as String? : null,
     );
+    final tempFile = File('${tempDir.path}/audio_${ev.eventId}$ext');
+    await tempFile.writeAsBytes(bytes);
+
+    await _player.setSource(DeviceFileSource(tempFile.path));
     if (mounted) setState(() => _isLoading = false);
   }
 
@@ -2946,7 +2952,7 @@ class _AudioAttachmentBubbleState extends State<_AudioAttachmentBubble> {
       if (_position >= _duration && _duration > Duration.zero) {
         await _player.seek(Duration.zero);
       }
-      await _player.play();
+      await _player.resume();
     }
   }
 

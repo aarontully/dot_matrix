@@ -22,7 +22,9 @@ class AuthController extends GetxController with StateMixin<String?> {
   static const _storageDeviceNameKey = 'matrix_device_name';
   static const _defaultDeviceName = 'DotMatrix';
 
-  final FlutterSecureStorage _storage = const FlutterSecureStorage();
+  final FlutterSecureStorage _storage = const FlutterSecureStorage(
+    mOptions: MacOsOptions(useDataProtectionKeyChain: false),
+  );
   Client _client = Client('Dot Matrix');
   StreamSubscription? _verificationSubscription;
   bool _postLoginFlowInProgress = false;
@@ -106,7 +108,11 @@ class AuthController extends GetxController with StateMixin<String?> {
   Future<void> _init() async {
     change(null, status: RxStatus.loading());
     try {
+      debugPrint('[AuthController] Starting _init, reading secure storage...');
       final storedValues = await _storage.readAll();
+      debugPrint(
+        '[AuthController] Secure storage readAll completed. Keys: ${storedValues.keys.toList()}',
+      );
       final accessToken = storedValues[_storageTokenKey];
       final userId = storedValues[_storageUserIdKey];
       final homeserver = storedValues[_storageHomeserverKey];
@@ -114,10 +120,17 @@ class AuthController extends GetxController with StateMixin<String?> {
       final deviceName =
           storedValues[_storageDeviceNameKey] ?? _defaultDeviceName;
 
+      debugPrint(
+        '[AuthController] token=${accessToken != null}, userId=${userId != null}, homeserver=${homeserver != null}, deviceId=${deviceId != null}',
+      );
+
       if (accessToken == null ||
           userId == null ||
           homeserver == null ||
           deviceId == null) {
+        debugPrint(
+          '[AuthController] Missing stored session fields, showing login.',
+        );
         change(null, status: RxStatus.success());
         return;
       }
@@ -125,6 +138,7 @@ class AuthController extends GetxController with StateMixin<String?> {
       final homeserverUri = Uri.parse(homeserver);
       final hasLocalMatrixSession = await _hasLocalMatrixSession();
 
+      debugPrint('[AuthController] Validating stored session...');
       try {
         final isStoredSessionValid = await _validateStoredSession(
           homeserver: homeserverUri,
@@ -145,7 +159,9 @@ class AuthController extends GetxController with StateMixin<String?> {
         }
       }
 
+      debugPrint('[AuthController] Creating Matrix client...');
       _client = await _createClient();
+      debugPrint('[AuthController] Initializing Matrix client...');
       await _client.init(
         newToken: hasLocalMatrixSession ? null : accessToken,
         newHomeserver: hasLocalMatrixSession ? null : homeserverUri,
@@ -155,12 +171,16 @@ class AuthController extends GetxController with StateMixin<String?> {
         waitForFirstSync: false,
         waitUntilLoadCompletedLoaded: false,
       );
+      debugPrint('[AuthController] Matrix client init completed.');
       await (_client.roomsLoading ?? Future.value());
+      debugPrint('[AuthController] Rooms loading completed.');
       _setupVerificationListener();
       await _maybeRegisterPusher();
       change(userId, status: RxStatus.success());
       await _maybePromptDeviceVerification();
-    } catch (error) {
+    } catch (error, stackTrace) {
+      debugPrint('[AuthController] _init error: $error');
+      debugPrint('[AuthController] _init stackTrace: $stackTrace');
       if (_isInvalidTokenError(error)) {
         await _resetStoredSession();
         change(null, status: RxStatus.success());
@@ -201,6 +221,7 @@ class AuthController extends GetxController with StateMixin<String?> {
         waitUntilLoadCompletedLoaded: false,
       );
 
+      debugPrint('[AuthController] Login successful, persisting session...');
       await _persistSession(
         accessToken: loginResponse.accessToken,
         userId: loginResponse.userId,
@@ -208,6 +229,7 @@ class AuthController extends GetxController with StateMixin<String?> {
         deviceId: loginResponse.deviceId,
         deviceName: _defaultDeviceName,
       );
+      debugPrint('[AuthController] Session persisted.');
 
       clearBrokenAvatarSources();
       _setupVerificationListener();
@@ -234,7 +256,15 @@ class AuthController extends GetxController with StateMixin<String?> {
   }
 
   Future<void> persistDeviceName(String deviceName) async {
-    await _storage.write(key: _storageDeviceNameKey, value: deviceName);
+    try {
+      debugPrint('[AuthController] persistDeviceName: writing deviceName...');
+      await _storage.write(key: _storageDeviceNameKey, value: deviceName);
+      debugPrint('[AuthController] persistDeviceName: success');
+    } catch (e, st) {
+      debugPrint('[AuthController] persistDeviceName error: $e');
+      debugPrint('[AuthController] persistDeviceName stackTrace: $st');
+      rethrow;
+    }
   }
 
   Future<void> logout() async {
@@ -246,7 +276,14 @@ class AuthController extends GetxController with StateMixin<String?> {
     }
 
     await PushNotificationService().unregisterPusher();
-    await _clearStoredSession();
+    try {
+      debugPrint('[AuthController] Clearing stored session...');
+      await _clearStoredSession();
+      debugPrint('[AuthController] Stored session cleared.');
+    } catch (e, st) {
+      debugPrint('[AuthController] logout clear session error: $e');
+      debugPrint('[AuthController] logout clear session stackTrace: $st');
+    }
     clearBrokenAvatarSources();
     _verificationSubscription?.cancel();
     _verificationSubscription = null;
@@ -385,18 +422,38 @@ class AuthController extends GetxController with StateMixin<String?> {
     required String deviceId,
     required String deviceName,
   }) async {
-    await _storage.write(key: _storageTokenKey, value: accessToken);
-    await _storage.write(key: _storageUserIdKey, value: userId);
-    await _storage.write(key: _storageHomeserverKey, value: homeserver);
-    await _storage.write(key: _storageDeviceIdKey, value: deviceId);
-    await _storage.write(key: _storageDeviceNameKey, value: deviceName);
+    try {
+      debugPrint('[AuthController] _persistSession: writing token...');
+      await _storage.write(key: _storageTokenKey, value: accessToken);
+      debugPrint('[AuthController] _persistSession: writing userId...');
+      await _storage.write(key: _storageUserIdKey, value: userId);
+      debugPrint('[AuthController] _persistSession: writing homeserver...');
+      await _storage.write(key: _storageHomeserverKey, value: homeserver);
+      debugPrint('[AuthController] _persistSession: writing deviceId...');
+      await _storage.write(key: _storageDeviceIdKey, value: deviceId);
+      debugPrint('[AuthController] _persistSession: writing deviceName...');
+      await _storage.write(key: _storageDeviceNameKey, value: deviceName);
+      debugPrint('[AuthController] _persistSession: all writes completed');
+    } catch (e, st) {
+      debugPrint('[AuthController] _persistSession error: $e');
+      debugPrint('[AuthController] _persistSession stackTrace: $st');
+      rethrow;
+    }
   }
 
   Future<void> _clearStoredSession() async {
-    await _storage.delete(key: _storageTokenKey);
-    await _storage.delete(key: _storageUserIdKey);
-    await _storage.delete(key: _storageHomeserverKey);
-    await _storage.delete(key: _storageDeviceIdKey);
-    await _storage.delete(key: _storageDeviceNameKey);
+    try {
+      debugPrint('[AuthController] _clearStoredSession: deleting keys...');
+      await _storage.delete(key: _storageTokenKey);
+      await _storage.delete(key: _storageUserIdKey);
+      await _storage.delete(key: _storageHomeserverKey);
+      await _storage.delete(key: _storageDeviceIdKey);
+      await _storage.delete(key: _storageDeviceNameKey);
+      debugPrint('[AuthController] _clearStoredSession: done');
+    } catch (e, st) {
+      debugPrint('[AuthController] _clearStoredSession error: $e');
+      debugPrint('[AuthController] _clearStoredSession stackTrace: $st');
+      rethrow;
+    }
   }
 }

@@ -12,8 +12,8 @@ import 'package:matrix/matrix.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:pasteboard/pasteboard.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_sound/flutter_sound.dart';
-import 'package:just_audio/just_audio.dart' as ja;
+import 'package:record/record.dart';
+import 'package:audioplayers/audioplayers.dart';
 
 import '../controllers/auth_controller.dart';
 import '../controllers/room_controller.dart';
@@ -66,7 +66,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final _messageController = TextEditingController();
   final _messageFocusNode = FocusNode();
   final _scrollController = ScrollController();
-  final _audioRecorder = FlutterSoundRecorder();
+  final _audioRecorder = AudioRecorder();
   final _imagePicker = ImagePicker();
   bool _isTyping = false;
   bool _isAttachmentMenuOpen = false;
@@ -106,7 +106,7 @@ class _ChatScreenState extends State<ChatScreen> {
       _markRoomAsRead();
       _scheduleHistoryPrefetchCheck();
     });
-    _audioRecorder.openRecorder();
+    // AudioRecorder initialized on first use
     _scheduleTimer = Timer.periodic(
       const Duration(seconds: 10),
       (_) => _checkScheduledMessages(),
@@ -647,45 +647,47 @@ class _ChatScreenState extends State<ChatScreen> {
                                             'image/jpg',
                                           ],
                                         ),
-                                    contextMenuBuilder:
-                                        (context, editableTextState) {
-                                          final buttonItems =
-                                              <ContextMenuButtonItem>[];
-                                          for (final item
-                                              in editableTextState
-                                                  .contextMenuButtonItems) {
-                                            if (item.label == 'Paste') {
-                                              buttonItems.add(
-                                                ContextMenuButtonItem(
-                                                  onPressed: () async {
-                                                    final imageBytes =
-                                                        await Pasteboard.image;
-                                                    if (imageBytes != null &&
-                                                        imageBytes.isNotEmpty) {
-                                                      _pasteFromClipboard();
-                                                    } else {
-                                                      editableTextState
-                                                          .pasteText(
-                                                            SelectionChangedCause
-                                                                .toolbar,
-                                                          );
-                                                    }
-                                                    editableTextState
-                                                        .hideToolbar();
-                                                  },
-                                                  label: 'Paste',
-                                                ),
-                                              );
-                                            } else {
-                                              buttonItems.add(item);
-                                            }
-                                          }
-                                          return AdaptiveTextSelectionToolbar.buttonItems(
-                                            anchors: editableTextState
-                                                .contextMenuAnchors,
-                                            buttonItems: buttonItems,
+                                    contextMenuBuilder: (context, editableTextState) {
+                                      final buttonItems =
+                                          <ContextMenuButtonItem>[];
+                                      for (final item
+                                          in editableTextState
+                                              .contextMenuButtonItems) {
+                                        if (item.label == 'Paste') {
+                                          buttonItems.add(
+                                            ContextMenuButtonItem(
+                                              onPressed: () async {
+                                                final hasFiles =
+                                                    (await Pasteboard.files())
+                                                        .isNotEmpty;
+                                                final imageBytes =
+                                                    await Pasteboard.image;
+                                                if (hasFiles ||
+                                                    (imageBytes != null &&
+                                                        imageBytes
+                                                            .isNotEmpty)) {
+                                                  _pasteFromClipboard();
+                                                } else {
+                                                  editableTextState.pasteText(
+                                                    SelectionChangedCause
+                                                        .toolbar,
+                                                  );
+                                                }
+                                                editableTextState.hideToolbar();
+                                              },
+                                              label: 'Paste',
+                                            ),
                                           );
-                                        },
+                                        } else {
+                                          buttonItems.add(item);
+                                        }
+                                      }
+                                      return AdaptiveTextSelectionToolbar.buttonItems(
+                                        anchors: editableTextState
+                                            .contextMenuAnchors,
+                                        buttonItems: buttonItems,
+                                      );
+                                    },
                                     decoration: InputDecoration(
                                       hintText: 'Message...',
                                       hintStyle: TextStyle(
@@ -758,10 +760,14 @@ class _ChatScreenState extends State<ChatScreen> {
                                       buttonItems.add(
                                         ContextMenuButtonItem(
                                           onPressed: () async {
+                                            final hasFiles =
+                                                (await Pasteboard.files())
+                                                    .isNotEmpty;
                                             final imageBytes =
                                                 await Pasteboard.image;
-                                            if (imageBytes != null &&
-                                                imageBytes.isNotEmpty) {
+                                            if (hasFiles ||
+                                                (imageBytes != null &&
+                                                    imageBytes.isNotEmpty)) {
                                               _pasteFromClipboard();
                                             } else {
                                               editableTextState.pasteText(
@@ -1496,6 +1502,33 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _pasteFromClipboard() async {
     try {
+      // On desktop, files() preserves original format (GIFs, etc.)
+      final files = await Pasteboard.files();
+      if (files.isNotEmpty) {
+        for (final path in files) {
+          final ext = path.split('.').lastOrNull?.toLowerCase() ?? '';
+          String? mime;
+          switch (ext) {
+            case 'gif':
+              mime = 'image/gif';
+            case 'png':
+              mime = 'image/png';
+            case 'jpg':
+            case 'jpeg':
+              mime = 'image/jpeg';
+            case 'webp':
+              mime = 'image/webp';
+            case 'bmp':
+              mime = 'image/bmp';
+          }
+          final media = XFile(path, mimeType: mime);
+          setState(() => _pendingImages.add(media));
+        }
+        if (!mounted) return;
+        Get.snackbar('', 'Image pasted');
+        return;
+      }
+
       final imageBytes = await Pasteboard.image;
       if (imageBytes == null || imageBytes.isEmpty) {
         if (!mounted) return;
@@ -1743,7 +1776,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (_isRecording) {
       // Stop recording
       try {
-        final path = await _audioRecorder.stopRecorder();
+        final path = await _audioRecorder.stop();
         setState(() => _isRecording = false);
         if (path == null || path.isEmpty) return;
         _recordedAudioFile = File(path);
@@ -1759,7 +1792,10 @@ class _ChatScreenState extends State<ChatScreen> {
         final dir = await getTemporaryDirectory();
         final path =
             '${dir.path}/voice_note_${DateTime.now().millisecondsSinceEpoch}.m4a';
-        await _audioRecorder.startRecorder(toFile: path, codec: Codec.aacMP4);
+        await _audioRecorder.start(
+          const RecordConfig(encoder: AudioEncoder.aacLc),
+          path: path,
+        );
         setState(() => _isRecording = true);
       } catch (error) {
         if (!mounted) return;
@@ -1878,7 +1914,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _messageController.dispose();
     _messageFocusNode.dispose();
     _scrollController.dispose();
-    _audioRecorder.closeRecorder();
+    _audioRecorder.dispose();
     _scheduleTimer?.cancel();
     super.dispose();
   }
@@ -1931,7 +1967,7 @@ class _AudioPreviewPlayer extends StatefulWidget {
 }
 
 class _AudioPreviewPlayerState extends State<_AudioPreviewPlayer> {
-  final _player = ja.AudioPlayer();
+  final _player = AudioPlayer();
   bool _isPlaying = false;
   Duration _duration = Duration.zero;
   Duration _position = Duration.zero;
@@ -1944,29 +1980,24 @@ class _AudioPreviewPlayerState extends State<_AudioPreviewPlayer> {
 
   Future<void> _initPlayer() async {
     try {
-      await _player.setAudioSource(
-        ja.AudioSource.uri(Uri.file(widget.audioFile.path)),
-      );
+      await _player.setSource(DeviceFileSource(widget.audioFile.path));
     } catch (e) {
       debugPrint('Audio preview load error: $e');
     }
-    _player.positionStream.listen((pos) {
+    _player.onPositionChanged.listen((pos) {
       if (mounted) setState(() => _position = pos);
     });
-    _player.durationStream.listen((dur) {
-      if (mounted && dur != null) setState(() => _duration = dur);
+    _player.onDurationChanged.listen((dur) {
+      if (mounted) setState(() => _duration = dur);
     });
-    _player.playerStateStream.listen((state) {
+    _player.onPlayerStateChanged.listen((state) {
       if (!mounted) return;
-      setState(() => _isPlaying = state.playing);
+      setState(() => _isPlaying = state == PlayerState.playing);
     });
-    _player.processingStateStream.listen((state) {
+    _player.onPlayerComplete.listen((_) {
       if (!mounted) return;
-      if (state == ja.ProcessingState.completed) {
-        _player.pause();
-        _player.seek(Duration.zero);
-        setState(() => _isPlaying = false);
-      }
+      _player.seek(Duration.zero);
+      setState(() => _isPlaying = false);
     });
   }
 
@@ -1977,7 +2008,7 @@ class _AudioPreviewPlayerState extends State<_AudioPreviewPlayer> {
       if (_position >= _duration && _duration > Duration.zero) {
         await _player.seek(Duration.zero);
       }
-      await _player.play();
+      await _player.resume();
     }
   }
 

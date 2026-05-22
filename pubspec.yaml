@@ -1,7 +1,7 @@
 name: dot_matrix
 description: "Dot Matrix - A secure, cross-platform Matrix chat client with end-to-end encryption, rich messaging, and a modern Material 3 interface."
 publish_to: 'none'
-version: 1.0.2+3
+version: 1.0.5-alpha+4
 
 environment:
   sdk: ^3.9.2
@@ -22,8 +22,8 @@ dependencies:
   flutter_openssl_crypto: ^0.5.0
   photo_view: ^0.15.0
   file_picker: ^8.0.0
-  flutter_sound: ^9.2.13
-  just_audio: ^0.9.46
+  record: 5.1.2
+  audioplayers: ^6.0.0
   permission_handler: ^11.3.1
   flutter_linkify: ^6.0.0
   url_launcher: ^6.2.6
@@ -34,6 +34,9 @@ dependencies:
   firebase_messaging: ^15.0.0
   flutter_local_notifications: ^17.0.0
   fc_native_video_thumbnail: ^2.2.0
+
+dependency_overrides:
+  record_platform_interface: 1.0.0
 
 dev_dependencies:
   flutter_test:

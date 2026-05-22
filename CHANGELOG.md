@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **macOS dynamic library loading** — added `/opt/homebrew/lib` to `LD_RUNPATH_SEARCH_PATHS` and extended the Flutter embed build script to copy `libcrypto.3.dylib` and `libolm.3.dylib` into the app bundle's `Contents/Frameworks` directory after each build. Also installed `libolm` via Homebrew, which the Matrix SDK requires for E2EE on desktop.
+- **macOS keychain access (debug)** — removed `com.apple.security.app-sandbox` from `DebugProfile.entitlements` so `flutter_secure_storage` can access the keychain during unsigned local debug builds. The sandbox remains enabled in `Release.entitlements` for production.
+
+## [v1.0.5-alpha] - 2026-05-21
+
+### Changed
+- **Audio recording** — migrated from `flutter_sound` to `record` for broader platform support (Windows, macOS, iOS, Android).
+- **Audio playback** — migrated from `just_audio` to `audioplayers` for broader platform support (Windows, macOS, iOS, Android, Web, Linux).
+- **`pubspec.yaml` dependencies**:
+  - Removed `flutter_sound: ^9.2.13` and `just_audio: ^0.9.46`
+  - Added `record: ^5.2.0` and `audioplayers: ^6.0.0`
+  - `version`: `1.0.2+3` → `1.0.5-alpha+4`
+
 ## [v1.0.4-alpha] - 2026-05-20
 
 ### Added
