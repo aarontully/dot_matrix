@@ -19,6 +19,7 @@ import '../controllers/auth_controller.dart';
 import '../controllers/room_controller.dart';
 import '../models/room_model.dart';
 import '../utils/bridge_detector.dart';
+import '../utils/current_session_trust.dart';
 import '../utils/permissions.dart';
 import '../utils/video_thumbnail_helper.dart';
 import '../widgets/bridge_icon.dart';
@@ -844,13 +845,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Widget _buildUnverifiedWarning() {
     final client = Get.find<AuthController>().client;
-    final userId = client.userID;
-    final deviceId = client.deviceID;
-    if (userId == null || deviceId == null) return const SizedBox.shrink();
-
-    final deviceKey = client.userDeviceKeys[userId]?.deviceKeys[deviceId];
-    final isVerified = deviceKey?.verified == true;
-    if (isVerified) return const SizedBox.shrink();
+    if (isCurrentSessionTrusted(client)) return const SizedBox.shrink();
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 6, left: 4, right: 4),

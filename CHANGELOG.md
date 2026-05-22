@@ -2,13 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [v1.0.5-alpha] - 2026-05-21
 
 ### Fixed
+- **Fresh-session trust detection** — device setup, post-login verification prompts, chat warnings, and the Sessions list now treat the current device as trusted only after the session is actually signed by your account, which fixes cases where a brand-new login incorrectly showed as already verified.
+- **Olm to-device decryption failures on reinstall** — added a guard in `AuthController._init()` that resets the stored session when the local Matrix database is missing but credentials still exist in secure storage. This prevents the app from reusing an old `deviceId` with a fresh Olm account, which breaks decryption of cross-device messages.
 - **macOS dynamic library loading** — added `/opt/homebrew/lib` to `LD_RUNPATH_SEARCH_PATHS` and extended the Flutter embed build script to copy `libcrypto.3.dylib` and `libolm.3.dylib` into the app bundle's `Contents/Frameworks` directory after each build. Also installed `libolm` via Homebrew, which the Matrix SDK requires for E2EE on desktop.
 - **macOS keychain access (debug)** — removed `com.apple.security.app-sandbox` from `DebugProfile.entitlements` so `flutter_secure_storage` can access the keychain during unsigned local debug builds. The sandbox remains enabled in `Release.entitlements` for production.
-
-## [v1.0.5-alpha] - 2026-05-21
 
 ### Changed
 - **Audio recording** — migrated from `flutter_sound` to `record` for broader platform support (Windows, macOS, iOS, Android).

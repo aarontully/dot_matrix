@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../services/push_notification_service.dart';
 import '../utils/avatar_url_resolver.dart';
+import '../utils/current_session_trust.dart';
 import '../screens/device_setup_screen.dart';
 import 'room_controller.dart';
 import 'settings_controller.dart';
@@ -137,6 +138,15 @@ class AuthController extends GetxController with StateMixin<String?> {
 
       final homeserverUri = Uri.parse(homeserver);
       final hasLocalMatrixSession = await _hasLocalMatrixSession();
+
+      if (!hasLocalMatrixSession) {
+        debugPrint(
+          '[AuthController] Local Matrix DB missing but credentials exist. Resetting session.',
+        );
+        await _resetStoredSession();
+        change(null, status: RxStatus.success());
+        return;
+      }
 
       debugPrint('[AuthController] Validating stored session...');
       try {
@@ -355,8 +365,7 @@ class AuthController extends GetxController with StateMixin<String?> {
       await _client.userDeviceKeysLoading;
 
       final ownKeys = _client.userDeviceKeys[userId];
-      final currentDeviceKey = ownKeys?.deviceKeys[_client.deviceID];
-      if (currentDeviceKey?.verified == true) return;
+      if (isCurrentSessionTrusted(_client)) return;
 
       final otherKeys =
           ownKeys?.deviceKeys.values

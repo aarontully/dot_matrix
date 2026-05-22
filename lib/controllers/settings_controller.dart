@@ -9,6 +9,7 @@ import 'package:matrix/matrix.dart';
 
 import '../models/device_session_info.dart';
 import '../models/settings_state.dart';
+import '../utils/current_session_trust.dart';
 import 'auth_controller.dart';
 import 'room_controller.dart';
 import '../services/push_notification_service.dart';
@@ -105,8 +106,7 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
           await client.updateUserDeviceKeys(additionalUsers: {userId});
           await client.userDeviceKeysLoading;
           final ownKeys = client.userDeviceKeys[userId];
-          final currentDeviceKey = ownKeys?.deviceKeys[client.deviceID];
-          isCurrentDeviceVerified = currentDeviceKey?.verified == true;
+          isCurrentDeviceVerified = isCurrentSessionTrusted(client);
           final otherDeviceKeys =
               ownKeys?.deviceKeys.values
                   .where((dk) => dk.deviceId != client.deviceID)
@@ -553,6 +553,8 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
         v = DeviceVerificationLabel.unknown;
       } else if (dk.blocked) {
         v = DeviceVerificationLabel.blocked;
+      } else if (d.deviceId == currentId && dk.signed != true) {
+        v = DeviceVerificationLabel.unverified;
       } else if (dk.verified) {
         v = DeviceVerificationLabel.verified;
       } else {
