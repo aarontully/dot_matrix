@@ -11,6 +11,7 @@ import '../utils/avatar_url_resolver.dart';
 import '../utils/bridge_detector.dart';
 import '../widgets/dot_matrix_loader.dart';
 import '../widgets/room_avatar_grid.dart';
+import 'user_profile_screen.dart';
 
 class RoomDetailsScreen extends StatefulWidget {
   final AppRoom room;
@@ -46,10 +47,7 @@ class _RoomDetailsScreenState extends State<RoomDetailsScreen> {
       final alsoMe = Get.find<SettingsController>().state?.alsoMeUserIds ?? [];
       final realMembers = participants.where((m) {
         if (alsoMe.contains(m.id)) return false;
-        return !BridgeDetector.isBridgeBot(
-          m.id,
-          displayName: m.displayName,
-        );
+        return !BridgeDetector.isBridgeBot(m.id, displayName: m.displayName);
       }).toList();
       final topic = room.topic;
       setState(() {
@@ -61,6 +59,15 @@ class _RoomDetailsScreenState extends State<RoomDetailsScreen> {
     } catch (e) {
       setState(() => _isLoadingMembers = false);
     }
+  }
+
+  Future<void> _openMemberProfile(User member) async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => UserProfileScreen(user: member)),
+    );
+    if (!mounted) return;
+    await _loadRoomInfo();
   }
 
   Future<void> _leaveRoom() async {
@@ -111,6 +118,12 @@ class _RoomDetailsScreenState extends State<RoomDetailsScreen> {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
     final client = Get.find<AuthController>().client;
+    final headerAvatarUrls = _members
+        .where((member) => member.id != client.userID)
+        .map((member) => member.avatarUrl)
+        .whereType<Uri>()
+        .take(4)
+        .toList();
 
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
@@ -135,14 +148,19 @@ class _RoomDetailsScreenState extends State<RoomDetailsScreen> {
           children: [
             Expanded(
               child: ListView(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 8,
+                ),
                 children: [
                   // Room header
                   Row(
                     children: [
                       RoomAvatarGrid(
                         avatarUrl: widget.room.avatarUrl,
-                        memberAvatarUrls: widget.room.memberAvatarUrls,
+                        memberAvatarUrls: headerAvatarUrls.isNotEmpty
+                            ? headerAvatarUrls
+                            : widget.room.memberAvatarUrls,
                         size: 64,
                         fallbackInitial: widget.room.displayname.isNotEmpty
                             ? widget.room.displayname[0].toUpperCase()
@@ -234,68 +252,94 @@ class _RoomDetailsScreenState extends State<RoomDetailsScreen> {
                     ..._members.map((member) {
                       final avatarUrl = member.avatarUrl;
                       final resolved = avatarUrl != null
-                          ? resolveAvatarImageUrl(
-                              avatarUrl,
-                              client,
-                              size: 80,
-                            )
+                          ? resolveAvatarImageUrl(avatarUrl, client, size: 80)
                           : null;
-                      final displayName = member.displayName ?? member.id.localpart ?? member.id;
+                      final displayName =
+                          member.displayName ??
+                          member.id.localpart ??
+                          member.id;
                       final isMe = member.id == client.userID;
 
                       return Padding(
                         padding: const EdgeInsets.only(bottom: 10),
-                        child: Row(
-                          children: [
-                            Container(
-                              width: 40,
-                              height: 40,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: cs.secondaryContainer,
+                        child: Material(
+                          color: Colors.transparent,
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(16),
+                            onTap: () => _openMemberProfile(member),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 6,
                               ),
-                              child: resolved != null
-                                  ? ClipOval(
-                                      child: CachedNetworkImage(
-                                        imageUrl: resolved,
-                                        httpHeaders: {
-                                          if (client.accessToken != null)
-                                            'Authorization': 'Bearer ${client.accessToken}',
-                                        },
-                                        width: 40,
-                                        height: 40,
-                                        fit: BoxFit.cover,
-                                        placeholder: (_, __) => _fallbackAvatar(displayName, cs),
-                                        errorWidget: (_, __, ___) => _fallbackAvatar(displayName, cs),
-                                      ),
-                                    )
-                                  : _fallbackAvatar(displayName, cs),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
+                              child: Row(
                                 children: [
-                                  Text(
-                                    displayName,
-                                    style: TextStyle(
-                                      fontSize: 15,
-                                      fontWeight: FontWeight.w600,
-                                      color: cs.onSurface,
+                                  Container(
+                                    width: 40,
+                                    height: 40,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: cs.secondaryContainer,
+                                    ),
+                                    child: resolved != null
+                                        ? ClipOval(
+                                            child: CachedNetworkImage(
+                                              imageUrl: resolved,
+                                              httpHeaders: {
+                                                if (client.accessToken != null)
+                                                  'Authorization':
+                                                      'Bearer ${client.accessToken}',
+                                              },
+                                              width: 40,
+                                              height: 40,
+                                              fit: BoxFit.cover,
+                                              placeholder: (_, __) =>
+                                                  _fallbackAvatar(
+                                                    displayName,
+                                                    cs,
+                                                  ),
+                                              errorWidget: (_, __, ___) =>
+                                                  _fallbackAvatar(
+                                                    displayName,
+                                                    cs,
+                                                  ),
+                                            ),
+                                          )
+                                        : _fallbackAvatar(displayName, cs),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          displayName,
+                                          style: TextStyle(
+                                            fontSize: 15,
+                                            fontWeight: FontWeight.w600,
+                                            color: cs.onSurface,
+                                          ),
+                                        ),
+                                        if (isMe)
+                                          Text(
+                                            'You',
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              color: cs.primary,
+                                            ),
+                                          ),
+                                      ],
                                     ),
                                   ),
-                                  if (isMe)
-                                    Text(
-                                      'You',
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: cs.primary,
-                                      ),
-                                    ),
+                                  Icon(
+                                    Icons.chevron_right_rounded,
+                                    color: cs.onSurface.withValues(alpha: 0.35),
+                                  ),
                                 ],
                               ),
                             ),
-                          ],
+                          ),
                         ),
                       );
                     }),
@@ -309,10 +353,7 @@ class _RoomDetailsScreenState extends State<RoomDetailsScreen> {
                 width: double.infinity,
                 child: OutlinedButton.icon(
                   onPressed: _leaveRoom,
-                  icon: Icon(
-                    Icons.logout,
-                    color: cs.error,
-                  ),
+                  icon: Icon(Icons.logout, color: cs.error),
                   label: Text(
                     'Leave Chat',
                     style: TextStyle(

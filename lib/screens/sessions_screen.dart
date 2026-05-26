@@ -89,7 +89,9 @@ class _SessionsScreenState extends State<SessionsScreen> {
                           if (i > 0)
                             Divider(
                               height: 1,
-                              color: Theme.of(context).colorScheme.outlineVariant,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.outlineVariant,
                             ),
                           _buildSessionTile(context, sessions[i]),
                         ],
@@ -226,7 +228,11 @@ class _SessionsScreenState extends State<SessionsScreen> {
           ),
           if (!session.isCurrentDevice)
             IconButton(
-              icon: Icon(Icons.logout, size: 20, color: cs.error.withValues(alpha: 0.7)),
+              icon: Icon(
+                Icons.logout,
+                size: 20,
+                color: cs.error.withValues(alpha: 0.7),
+              ),
               onPressed: () => _confirmRemoveSession(session),
               tooltip: 'Remove session',
             ),
@@ -251,7 +257,9 @@ class _SessionsScreenState extends State<SessionsScreen> {
           ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(true),
-            style: FilledButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.error),
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(context).colorScheme.error,
+            ),
             child: const Text('Remove'),
           ),
         ],
@@ -260,8 +268,20 @@ class _SessionsScreenState extends State<SessionsScreen> {
 
     if (confirmed != true) return;
 
+    await _removeSession(session);
+  }
+
+  Future<void> _removeSession(
+    DeviceSessionInfo session, {
+    String? password,
+    String? authSession,
+  }) async {
     try {
-      await Get.find<SettingsController>().deleteDeviceSession(session.deviceId);
+      await Get.find<SettingsController>().deleteDeviceSession(
+        session.deviceId,
+        password: password,
+        authSession: authSession,
+      );
       if (!mounted) return;
       setState(() => _refreshToken++);
       Get.snackbar(
@@ -269,6 +289,25 @@ class _SessionsScreenState extends State<SessionsScreen> {
         'Session removed successfully.',
         snackPosition: SnackPosition.BOTTOM,
         duration: const Duration(seconds: 2),
+      );
+    } on DeviceSessionReauthRequired catch (error) {
+      if (!error.supportsPassword) {
+        if (!mounted) return;
+        Get.snackbar(
+          'Extra authentication required',
+          error.toString(),
+          snackPosition: SnackPosition.BOTTOM,
+          duration: const Duration(seconds: 4),
+        );
+        return;
+      }
+
+      final password = await _promptForPassword(session);
+      if (password == null || password.trim().isEmpty) return;
+      await _removeSession(
+        session,
+        password: password,
+        authSession: error.session,
       );
     } catch (error) {
       if (!mounted) return;
@@ -279,6 +318,67 @@ class _SessionsScreenState extends State<SessionsScreen> {
         duration: const Duration(seconds: 3),
       );
     }
+  }
+
+  Future<String?> _promptForPassword(DeviceSessionInfo session) {
+    final controller = TextEditingController();
+    var obscureText = true;
+
+    return showDialog<String>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            final title = session.displayName?.trim().isNotEmpty == true
+                ? session.displayName!.trim()
+                : session.deviceId;
+
+            return AlertDialog(
+              title: const Text('Confirm password'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Your homeserver needs you to re-enter your password before removing "$title".',
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: controller,
+                    autofocus: true,
+                    obscureText: obscureText,
+                    textInputAction: TextInputAction.done,
+                    onSubmitted: (_) =>
+                        Navigator.of(context).pop(controller.text),
+                    decoration: InputDecoration(
+                      labelText: 'Password',
+                      suffixIcon: IconButton(
+                        onPressed: () {
+                          setState(() => obscureText = !obscureText);
+                        },
+                        icon: Icon(
+                          obscureText ? Icons.visibility : Icons.visibility_off,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(context).pop(controller.text),
+                  child: const Text('Continue'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    ).whenComplete(controller.dispose);
   }
 
   Widget _sessionVerificationChip(

@@ -7,6 +7,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:matrix/encryption.dart';
 import 'package:matrix/matrix.dart';
 
+import '../config/push_defaults.dart';
 import '../models/device_session_info.dart';
 import '../models/settings_state.dart';
 import '../utils/current_session_trust.dart';
@@ -14,9 +15,30 @@ import 'auth_controller.dart';
 import 'room_controller.dart';
 import '../services/push_notification_service.dart';
 
+class DeviceSessionReauthRequired implements Exception {
+  const DeviceSessionReauthRequired({
+    required this.deviceId,
+    this.session,
+    required this.supportsPassword,
+  });
+
+  final String deviceId;
+  final String? session;
+  final bool supportsPassword;
+
+  @override
+  String toString() {
+    if (supportsPassword) {
+      return 'Confirm your password to remove this session.';
+    }
+    return 'This homeserver requires extra authentication to remove a session, and DotMatrix cannot complete that flow here yet.';
+  }
+}
+
 class SettingsController extends GetxController with StateMixin<SettingsState> {
   static const _boxName = 'dot_matrix_settings';
   static const _notificationsKey = 'notifications_enabled';
+  static const _notificationsPromptSeenKey = 'notifications_prompt_seen';
   static const _pushGatewayUrlKey = 'push_gateway_url';
   static const _encryptMessagesKey = 'encrypt_messages';
   static const _appearanceKey = 'appearance';
@@ -52,8 +74,11 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
         ? Color(customColorValue)
         : null;
     Get.changeThemeMode(appearance.themeMode);
-    final notificationsEnabled = (box.get(_notificationsKey) as bool?) ?? true;
-    final pushGatewayUrl = box.get(_pushGatewayUrlKey) as String?;
+    final notificationsEnabled = (box.get(_notificationsKey) as bool?) ?? false;
+    final notificationsPromptSeen =
+        (box.get(_notificationsPromptSeenKey) as bool?) ??
+        box.containsKey(_notificationsKey);
+    var pushGatewayUrl = box.get(_pushGatewayUrlKey) as String?;
     final encryptMessages = (box.get(_encryptMessagesKey) as bool?) ?? true;
     final alsoMeRaw = box.get(_alsoMeUserIdsKey) as List<dynamic>?;
     final alsoMeUserIds =
@@ -61,6 +86,13 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
     if (auth.state == null || client.userID == null) {
       change(null, status: RxStatus.success());
       return;
+    }
+
+    if (pushGatewayUrl == null || pushGatewayUrl.isEmpty) {
+      pushGatewayUrl = await _discoverExistingPushGatewayUrl(
+        client,
+        persistToState: false,
+      );
     }
 
     try {
@@ -139,6 +171,7 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
             'DotMatrix Device',
           ),
           notificationsEnabled: notificationsEnabled,
+          notificationsPromptSeen: notificationsPromptSeen,
           pushGatewayUrl: pushGatewayUrl,
           encryptMessages: encryptMessages,
           activeStatusEnabled:
@@ -211,12 +244,48 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
   Future<void> setNotificationsEnabled(bool enabled) async {
     final current = state;
     if (current == null) return;
+    await _persistNotificationsState(
+      enabled: enabled,
+      promptSeen: current.notificationsPromptSeen,
+    );
+  }
 
-    final box = await _openBox();
-    await box.put(_notificationsKey, enabled);
-    change(
-      current.copyWith(notificationsEnabled: enabled),
-      status: RxStatus.success(),
+  Future<bool> enableNotifications({
+    bool requestPermission = true,
+    bool markPromptSeen = true,
+  }) async {
+    final current = state;
+    if (current == null) return false;
+
+    var granted = true;
+    if (requestPermission) {
+      granted = await PushNotificationService().requestPermission();
+    }
+
+    await _persistNotificationsState(
+      enabled: granted,
+      promptSeen: markPromptSeen || current.notificationsPromptSeen,
+    );
+    return granted;
+  }
+
+  Future<void> disableNotifications({bool markPromptSeen = true}) async {
+    final current = state;
+    if (current == null) return;
+
+    await _persistNotificationsState(
+      enabled: false,
+      promptSeen: markPromptSeen || current.notificationsPromptSeen,
+    );
+  }
+
+  Future<void> markNotificationsPromptSeen() async {
+    final current = state;
+    if (current == null || current.notificationsPromptSeen) return;
+
+    await _persistNotificationsState(
+      enabled: current.notificationsEnabled,
+      promptSeen: true,
     );
   }
 
@@ -249,9 +318,118 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
     }
 
     final auth = Get.find<AuthController>();
-    if (auth.state != null && url != null && url.isNotEmpty) {
+    if (auth.state != null &&
+        current.notificationsEnabled &&
+        url != null &&
+        url.isNotEmpty) {
       await PushNotificationService().registerPusher(url);
+    } else if (auth.state != null) {
+      await PushNotificationService().unregisterPusher();
     }
+  }
+
+  Future<String?> ensurePushGatewayUrl() async {
+    final current = state;
+    final existing = current?.pushGatewayUrl;
+    if (existing != null && existing.isNotEmpty) {
+      return existing;
+    }
+
+    final discovered = await _discoverExistingPushGatewayUrl(
+      Get.find<AuthController>().client,
+    );
+    if (discovered != null && discovered.isNotEmpty) {
+      return discovered;
+    }
+
+    return _useDefaultPushGatewayUrl();
+  }
+
+  Future<String?> _discoverExistingPushGatewayUrl(
+    Client client, {
+    bool persistToState = true,
+  }) async {
+    if (client.accessToken == null) return null;
+
+    try {
+      final pushers = await client.getPushers();
+      final discoveredUrl = _pickExistingPushGatewayUrl(pushers);
+      if (discoveredUrl == null || discoveredUrl.isEmpty) {
+        return null;
+      }
+
+      final box = await _openBox();
+      final existing = box.get(_pushGatewayUrlKey) as String?;
+      if (existing == discoveredUrl) {
+        return discoveredUrl;
+      }
+
+      await box.put(_pushGatewayUrlKey, discoveredUrl);
+      if (persistToState) {
+        final current = state;
+        if (current != null) {
+          change(
+            current.copyWith(pushGatewayUrl: discoveredUrl),
+            status: RxStatus.success(),
+          );
+        }
+      }
+      debugPrint(
+        '[Push] Reusing push gateway from existing Matrix pusher: '
+        '$discoveredUrl',
+      );
+      return discoveredUrl;
+    } catch (error) {
+      debugPrint('[Push] Could not discover existing push gateway: $error');
+      return null;
+    }
+  }
+
+  Future<String?> _useDefaultPushGatewayUrl() async {
+    final configuredDefault = defaultPushGatewayUrl();
+    if (configuredDefault == null) {
+      return null;
+    }
+
+    final box = await _openBox();
+    final existing = box.get(_pushGatewayUrlKey) as String?;
+    if (existing != configuredDefault) {
+      await box.put(_pushGatewayUrlKey, configuredDefault);
+    }
+
+    final current = state;
+    if (current != null && current.pushGatewayUrl != configuredDefault) {
+      change(
+        current.copyWith(pushGatewayUrl: configuredDefault),
+        status: RxStatus.success(),
+      );
+    }
+
+    debugPrint(
+      '[Push] Using DotMatrix default push gateway: $configuredDefault',
+    );
+    return configuredDefault;
+  }
+
+  String? _pickExistingPushGatewayUrl(List<Pusher>? pushers) {
+    if (pushers == null || pushers.isEmpty) return null;
+
+    Pusher? preferred;
+    Pusher? fallback;
+    for (final pusher in pushers) {
+      final url = pusher.data.url?.toString();
+      if (pusher.kind != 'http' || url == null || url.isEmpty) {
+        continue;
+      }
+
+      if (pusher.appId == 'com.housetully.dotmatrix') {
+        preferred = pusher;
+        break;
+      }
+      fallback ??= pusher;
+    }
+
+    return preferred?.data.url?.toString() ?? fallback?.data.url?.toString();
   }
 
   Future<void> addAlsoMeUser(String userId) async {
@@ -267,6 +445,9 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
       list.add(trimmed);
       await box.put(_alsoMeUserIdsKey, list);
       change(current.copyWith(alsoMeUserIds: list), status: RxStatus.success());
+      try {
+        await Get.find<RoomController>().refreshRooms();
+      } catch (_) {}
     }
   }
 
@@ -279,6 +460,9 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
     if (list.remove(userId)) {
       await box.put(_alsoMeUserIdsKey, list);
       change(current.copyWith(alsoMeUserIds: list), status: RxStatus.success());
+      try {
+        await Get.find<RoomController>().refreshRooms();
+      } catch (_) {}
     }
   }
 
@@ -581,12 +765,49 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
     return list;
   }
 
-  Future<void> deleteDeviceSession(String deviceId) async {
+  Future<void> deleteDeviceSession(
+    String deviceId, {
+    String? password,
+    String? authSession,
+  }) async {
     final client = Get.find<AuthController>().client;
+    final userId = client.userID;
+    final trimmedPassword = password?.trim();
+
     try {
-      await client.deleteDevice(deviceId);
-    } catch (e) {
-      throw Exception('Failed to remove session: $e');
+      AuthenticationData? auth;
+      if (trimmedPassword != null &&
+          trimmedPassword.isNotEmpty &&
+          userId != null) {
+        auth = AuthenticationPassword(
+          identifier: AuthenticationUserIdentifier(user: userId),
+          password: trimmedPassword,
+          session: authSession,
+        );
+      }
+
+      await client.deleteDevice(deviceId, auth: auth);
+    } on MatrixException catch (error) {
+      if (error.requireAdditionalAuthentication) {
+        if (trimmedPassword != null && trimmedPassword.isNotEmpty) {
+          throw Exception(
+            'Failed to confirm your password: ${error.errorMessage}',
+          );
+        }
+        final supportsPassword =
+            error.authenticationFlows?.any(
+              (flow) => flow.stages.contains(AuthenticationTypes.password),
+            ) ??
+            false;
+        throw DeviceSessionReauthRequired(
+          deviceId: deviceId,
+          session: error.session,
+          supportsPassword: supportsPassword,
+        );
+      }
+      throw Exception('Failed to remove session: ${error.errorMessage}');
+    } catch (error) {
+      throw Exception('Failed to remove session: $error');
     }
   }
 
@@ -854,6 +1075,48 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
       return Hive.box<dynamic>(_boxName);
     }
     return Hive.openBox<dynamic>(_boxName);
+  }
+
+  Future<void> _persistNotificationsState({
+    required bool enabled,
+    required bool promptSeen,
+  }) async {
+    final current = state;
+    if (current == null) return;
+
+    final box = await _openBox();
+    await box.put(_notificationsKey, enabled);
+    await box.put(_notificationsPromptSeenKey, promptSeen);
+    change(
+      current.copyWith(
+        notificationsEnabled: enabled,
+        notificationsPromptSeen: promptSeen,
+      ),
+      status: RxStatus.success(),
+    );
+
+    final auth = Get.find<AuthController>();
+    if (auth.state == null) return;
+
+    final pushGatewayUrl = current.pushGatewayUrl;
+    if (enabled) {
+      final effectivePushGatewayUrl =
+          (pushGatewayUrl != null && pushGatewayUrl.isNotEmpty)
+          ? pushGatewayUrl
+          : await ensurePushGatewayUrl();
+      if (effectivePushGatewayUrl != null &&
+          effectivePushGatewayUrl.isNotEmpty) {
+        await PushNotificationService().registerPusher(effectivePushGatewayUrl);
+        return;
+      }
+      debugPrint(
+        '[Push] Notifications enabled, but no Matrix push gateway could be '
+        'discovered for background delivery.',
+      );
+      return;
+    } else {
+      await PushNotificationService().unregisterPusher();
+    }
   }
 
   String _nonEmptyOrFallback(String? value, String fallback) {

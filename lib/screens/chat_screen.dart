@@ -18,6 +18,7 @@ import 'package:audioplayers/audioplayers.dart';
 import '../controllers/auth_controller.dart';
 import '../controllers/room_controller.dart';
 import '../models/room_model.dart';
+import '../services/push_notification_service.dart';
 import '../utils/bridge_detector.dart';
 import '../utils/current_session_trust.dart';
 import '../utils/permissions.dart';
@@ -59,9 +60,19 @@ class _ResolvedTimelineView {
   final bool isWaitingForKey;
 }
 
+class _MentionQuery {
+  const _MentionQuery({required this.start, required this.query});
+
+  final int start;
+  final String query;
+}
+
 class _ChatScreenState extends State<ChatScreen> {
   static const double _historyPrefetchThreshold = 600;
   static const int _historyBatchSize = 40;
+  static const double _pickedImageMaxDimension = 2048;
+  static const int _pickedImageQuality = 85;
+  static const int _previewDecodeSize = 180;
   static final DateFormat _dateHeaderFormat = DateFormat.yMMMMd();
 
   final _messageController = TextEditingController();
@@ -84,20 +95,25 @@ class _ChatScreenState extends State<ChatScreen> {
   List<AppEvent>? _cachedTimelineSourceMessages;
   String? _cachedTimelineOwnUserId;
   _ResolvedTimelineView? _cachedTimelineView;
+  List<User> _mentionableUsers = const [];
+  List<User> _mentionSuggestions = const [];
+  int? _activeMentionStart;
+  String _activeMentionQuery = '';
+  bool _isLoadingMentionSuggestions = false;
+  int _mentionLookupToken = 0;
 
   @override
   void initState() {
     super.initState();
-    _messageController.addListener(() {
-      final isTyping = _messageController.text.trim().isNotEmpty;
-      if (isTyping != _isTyping) {
-        setState(() => _isTyping = isTyping);
-      }
-    });
+    PushNotificationService().setActiveRoom(widget.room.id);
+    _messageController.addListener(_handleComposerChanged);
     _messageFocusNode.addListener(() {
       final focused = _messageFocusNode.hasFocus;
       if (focused && _isAttachmentMenuOpen) {
         setState(() => _isAttachmentMenuOpen = false);
+      }
+      if (!focused) {
+        _clearMentionSuggestions();
       }
       if (focused != _isMessageFieldFocused) {
         setState(() => _isMessageFieldFocused = focused);
@@ -562,6 +578,10 @@ class _ChatScreenState extends State<ChatScreen> {
             duration: const Duration(milliseconds: 220),
           ),
           _buildUnverifiedWarning(),
+          if (_shouldShowMentionSuggestions()) ...[
+            _buildMentionSuggestions(cs),
+            const SizedBox(height: 8),
+          ],
           if (_recordedAudioFile != null)
             _AudioPreviewPlayer(
               audioFile: _recordedAudioFile!,
@@ -627,95 +647,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                 children: [
                                   if (_pendingImages.isNotEmpty)
                                     _buildImagePreviews(cs),
-                                  TextField(
-                                    controller: _messageController,
-                                    focusNode: _messageFocusNode,
-                                    minLines: 1,
-                                    maxLines: 4,
-                                    textCapitalization:
-                                        TextCapitalization.sentences,
-                                    textInputAction: TextInputAction.send,
-                                    onSubmitted: (_) => _sendMessage(),
-                                    contentInsertionConfiguration:
-                                        ContentInsertionConfiguration(
-                                          onContentInserted:
-                                              _handleInsertedContent,
-                                          allowedMimeTypes: const [
-                                            'image/gif',
-                                            'image/png',
-                                            'image/jpeg',
-                                            'image/webp',
-                                            'image/jpg',
-                                          ],
-                                        ),
-                                    contextMenuBuilder: (context, editableTextState) {
-                                      final buttonItems =
-                                          <ContextMenuButtonItem>[];
-                                      for (final item
-                                          in editableTextState
-                                              .contextMenuButtonItems) {
-                                        if (item.label == 'Paste') {
-                                          buttonItems.add(
-                                            ContextMenuButtonItem(
-                                              onPressed: () async {
-                                                final hasFiles =
-                                                    (await Pasteboard.files())
-                                                        .isNotEmpty;
-                                                final imageBytes =
-                                                    await Pasteboard.image;
-                                                if (hasFiles ||
-                                                    (imageBytes != null &&
-                                                        imageBytes
-                                                            .isNotEmpty)) {
-                                                  _pasteFromClipboard();
-                                                } else {
-                                                  editableTextState.pasteText(
-                                                    SelectionChangedCause
-                                                        .toolbar,
-                                                  );
-                                                }
-                                                editableTextState.hideToolbar();
-                                              },
-                                              label: 'Paste',
-                                            ),
-                                          );
-                                        } else {
-                                          buttonItems.add(item);
-                                        }
-                                      }
-                                      return AdaptiveTextSelectionToolbar.buttonItems(
-                                        anchors: editableTextState
-                                            .contextMenuAnchors,
-                                        buttonItems: buttonItems,
-                                      );
-                                    },
-                                    decoration: InputDecoration(
-                                      hintText: 'Message...',
-                                      hintStyle: TextStyle(
-                                        color: cs.onSurface.withValues(
-                                          alpha: 0.5,
-                                        ),
-                                      ),
-                                      isDense: true,
-                                      contentPadding:
-                                          const EdgeInsets.symmetric(
-                                            horizontal: 14,
-                                            vertical: 12,
-                                          ),
-                                      suffixIcon: IconButton(
-                                        icon: Icon(
-                                          Icons.sentiment_satisfied_outlined,
-                                          color: cs.onSurface.withValues(
-                                            alpha: 0.6,
-                                          ),
-                                        ),
-                                        onPressed: _showEmojiPickerSheet,
-                                      ),
-                                      border: InputBorder.none,
-                                      focusedBorder: InputBorder.none,
-                                      enabledBorder: InputBorder.none,
-                                    ),
-                                  ),
+                                  _buildComposerField(cs),
                                 ],
                               ),
                             ),
@@ -732,88 +664,7 @@ class _ChatScreenState extends State<ChatScreen> {
                             children: [
                               if (_pendingImages.isNotEmpty)
                                 _buildImagePreviews(cs),
-                              TextField(
-                                controller: _messageController,
-                                focusNode: _messageFocusNode,
-                                minLines: 1,
-                                maxLines: 4,
-                                textCapitalization:
-                                    TextCapitalization.sentences,
-                                textInputAction: TextInputAction.send,
-                                onSubmitted: (_) => _sendMessage(),
-                                contentInsertionConfiguration:
-                                    ContentInsertionConfiguration(
-                                      onContentInserted: _handleInsertedContent,
-                                      allowedMimeTypes: const [
-                                        'image/gif',
-                                        'image/png',
-                                        'image/jpeg',
-                                        'image/webp',
-                                        'image/jpg',
-                                      ],
-                                    ),
-                                contextMenuBuilder: (context, editableTextState) {
-                                  final buttonItems = <ContextMenuButtonItem>[];
-                                  for (final item
-                                      in editableTextState
-                                          .contextMenuButtonItems) {
-                                    if (item.label == 'Paste') {
-                                      buttonItems.add(
-                                        ContextMenuButtonItem(
-                                          onPressed: () async {
-                                            final hasFiles =
-                                                (await Pasteboard.files())
-                                                    .isNotEmpty;
-                                            final imageBytes =
-                                                await Pasteboard.image;
-                                            if (hasFiles ||
-                                                (imageBytes != null &&
-                                                    imageBytes.isNotEmpty)) {
-                                              _pasteFromClipboard();
-                                            } else {
-                                              editableTextState.pasteText(
-                                                SelectionChangedCause.toolbar,
-                                              );
-                                            }
-                                            editableTextState.hideToolbar();
-                                          },
-                                          label: 'Paste',
-                                        ),
-                                      );
-                                    } else {
-                                      buttonItems.add(item);
-                                    }
-                                  }
-                                  return AdaptiveTextSelectionToolbar.buttonItems(
-                                    anchors:
-                                        editableTextState.contextMenuAnchors,
-                                    buttonItems: buttonItems,
-                                  );
-                                },
-                                decoration: InputDecoration(
-                                  hintText: 'Message...',
-                                  hintStyle: TextStyle(
-                                    color: cs.onSurface.withValues(alpha: 0.5),
-                                  ),
-                                  isDense: true,
-                                  contentPadding: const EdgeInsets.symmetric(
-                                    horizontal: 14,
-                                    vertical: 12,
-                                  ),
-                                  suffixIcon: IconButton(
-                                    icon: Icon(
-                                      Icons.sentiment_satisfied_outlined,
-                                      color: cs.onSurface.withValues(
-                                        alpha: 0.6,
-                                      ),
-                                    ),
-                                    onPressed: _showEmojiPickerSheet,
-                                  ),
-                                  border: InputBorder.none,
-                                  focusedBorder: InputBorder.none,
-                                  enabledBorder: InputBorder.none,
-                                ),
-                              ),
+                              _buildComposerField(cs),
                             ],
                           ),
                         ),
@@ -841,6 +692,328 @@ class _ChatScreenState extends State<ChatScreen> {
         ],
       ),
     );
+  }
+
+  Widget _buildComposerField(ColorScheme cs) {
+    return TextField(
+      controller: _messageController,
+      focusNode: _messageFocusNode,
+      minLines: 1,
+      maxLines: 4,
+      textCapitalization: TextCapitalization.sentences,
+      textInputAction: TextInputAction.send,
+      onSubmitted: (_) => _sendMessage(),
+      contentInsertionConfiguration: ContentInsertionConfiguration(
+        onContentInserted: _handleInsertedContent,
+        allowedMimeTypes: const [
+          'image/gif',
+          'image/png',
+          'image/jpeg',
+          'image/webp',
+          'image/jpg',
+        ],
+      ),
+      contextMenuBuilder: _buildComposerContextMenu,
+      decoration: InputDecoration(
+        hintText: 'Message...',
+        hintStyle: TextStyle(color: cs.onSurface.withValues(alpha: 0.5)),
+        isDense: true,
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 14,
+          vertical: 12,
+        ),
+        suffixIcon: IconButton(
+          icon: Icon(
+            Icons.sentiment_satisfied_outlined,
+            color: cs.onSurface.withValues(alpha: 0.6),
+          ),
+          onPressed: _showEmojiPickerSheet,
+        ),
+        border: InputBorder.none,
+        focusedBorder: InputBorder.none,
+        enabledBorder: InputBorder.none,
+      ),
+    );
+  }
+
+  Widget _buildComposerContextMenu(
+    BuildContext context,
+    EditableTextState editableTextState,
+  ) {
+    final buttonItems = <ContextMenuButtonItem>[];
+    for (final item in editableTextState.contextMenuButtonItems) {
+      if (item.label == 'Paste') {
+        buttonItems.add(
+          ContextMenuButtonItem(
+            onPressed: () async {
+              final hasFiles = (await Pasteboard.files()).isNotEmpty;
+              final imageBytes = await Pasteboard.image;
+              if (hasFiles || (imageBytes != null && imageBytes.isNotEmpty)) {
+                _pasteFromClipboard();
+              } else {
+                editableTextState.pasteText(SelectionChangedCause.toolbar);
+              }
+              editableTextState.hideToolbar();
+            },
+            label: 'Paste',
+          ),
+        );
+      } else {
+        buttonItems.add(item);
+      }
+    }
+    return AdaptiveTextSelectionToolbar.buttonItems(
+      anchors: editableTextState.contextMenuAnchors,
+      buttonItems: buttonItems,
+    );
+  }
+
+  Widget _buildMentionSuggestions(ColorScheme cs) {
+    return Container(
+      width: double.infinity,
+      constraints: const BoxConstraints(maxHeight: 220),
+      decoration: BoxDecoration(
+        color: cs.surface,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: cs.outlineVariant),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.08),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: _isLoadingMentionSuggestions
+          ? Padding(
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              child: Center(
+                child: DotMatrixLoader(size: 18, dotSize: 3, color: cs.primary),
+              ),
+            )
+          : ListView.separated(
+              shrinkWrap: true,
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              itemCount: _mentionSuggestions.length,
+              separatorBuilder: (_, _) =>
+                  Divider(height: 1, color: cs.outlineVariant),
+              itemBuilder: (context, index) {
+                final user = _mentionSuggestions[index];
+                final name = _mentionDisplayName(user);
+                final subtitle = user.id == name ? null : user.id;
+                final platform = BridgeDetector.detectFromUserId(user.id);
+                final initial = name.isNotEmpty ? name[0].toUpperCase() : '?';
+                return ListTile(
+                  dense: true,
+                  leading: CircleAvatar(
+                    backgroundColor: cs.secondaryContainer,
+                    foregroundColor: cs.onSecondaryContainer,
+                    child: Text(initial),
+                  ),
+                  title: Text(
+                    name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  subtitle: subtitle == null
+                      ? null
+                      : Text(
+                          subtitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                  trailing: platform == BridgePlatform.unknown
+                      ? null
+                      : BridgeIcon(platform: platform, size: 18),
+                  onTap: () => _insertMention(user),
+                );
+              },
+            ),
+    );
+  }
+
+  bool _shouldShowMentionSuggestions() {
+    return _messageFocusNode.hasFocus &&
+        (_isLoadingMentionSuggestions || _mentionSuggestions.isNotEmpty) &&
+        (_activeMentionStart != null || _activeMentionQuery.isNotEmpty);
+  }
+
+  void _handleComposerChanged() {
+    final isTyping = _messageController.text.trim().isNotEmpty;
+    if (isTyping != _isTyping && mounted) {
+      setState(() => _isTyping = isTyping);
+    }
+    _refreshMentionSuggestions();
+  }
+
+  void _clearMentionSuggestions() {
+    if (_activeMentionStart == null &&
+        _activeMentionQuery.isEmpty &&
+        _mentionSuggestions.isEmpty &&
+        !_isLoadingMentionSuggestions) {
+      return;
+    }
+    if (!mounted) return;
+    setState(() {
+      _activeMentionStart = null;
+      _activeMentionQuery = '';
+      _mentionSuggestions = const [];
+      _isLoadingMentionSuggestions = false;
+    });
+  }
+
+  _MentionQuery? _currentMentionQuery() {
+    final value = _messageController.value;
+    final selection = value.selection;
+    if (!selection.isValid || !selection.isCollapsed) return null;
+    final cursor = selection.extentOffset;
+    if (cursor < 0 || cursor > value.text.length) return null;
+    final prefix = value.text.substring(0, cursor);
+    final match = RegExp(r'(^|[\s(])@([^\s@]*)$').firstMatch(prefix);
+    if (match == null) return null;
+    final start = match.start + match.group(1)!.length;
+    return _MentionQuery(start: start, query: match.group(2) ?? '');
+  }
+
+  Future<void> _refreshMentionSuggestions() async {
+    if (!_messageFocusNode.hasFocus) {
+      _clearMentionSuggestions();
+      return;
+    }
+
+    final mention = _currentMentionQuery();
+    if (mention == null) {
+      _clearMentionSuggestions();
+      return;
+    }
+
+    final queryChanged =
+        mention.start != _activeMentionStart ||
+        mention.query != _activeMentionQuery;
+    if (!queryChanged &&
+        (_mentionSuggestions.isNotEmpty || _isLoadingMentionSuggestions)) {
+      return;
+    }
+
+    if (mounted) {
+      setState(() {
+        _activeMentionStart = mention.start;
+        _activeMentionQuery = mention.query;
+        _isLoadingMentionSuggestions = _mentionableUsers.isEmpty;
+        if (_mentionableUsers.isEmpty) {
+          _mentionSuggestions = const [];
+        }
+      });
+    }
+
+    if (_mentionableUsers.isEmpty) {
+      final token = ++_mentionLookupToken;
+      final users = await _loadMentionableUsers();
+      if (!mounted || token != _mentionLookupToken) return;
+      _mentionableUsers = users;
+    }
+
+    final suggestions = _filterMentionSuggestions(mention.query);
+    if (!mounted) return;
+    setState(() {
+      if (_activeMentionStart == mention.start &&
+          _activeMentionQuery == mention.query) {
+        _mentionSuggestions = suggestions;
+        _isLoadingMentionSuggestions = false;
+      }
+    });
+  }
+
+  Future<List<User>> _loadMentionableUsers() async {
+    final client = Get.find<AuthController>().client;
+    final room = client.getRoomById(widget.room.id);
+    if (room == null) return const [];
+
+    try {
+      final participants = await room.requestParticipants();
+      return participants.where((user) {
+        if (user.id == client.userID) return false;
+        if (!{Membership.invite, Membership.join}.contains(user.membership)) {
+          return false;
+        }
+        return !BridgeDetector.isBridgeBot(
+          user.id,
+          displayName: user.displayName,
+        );
+      }).toList()..sort((a, b) {
+        final nameCompare = _mentionDisplayName(
+          a,
+        ).toLowerCase().compareTo(_mentionDisplayName(b).toLowerCase());
+        if (nameCompare != 0) return nameCompare;
+        return a.id.toLowerCase().compareTo(b.id.toLowerCase());
+      });
+    } catch (error) {
+      debugPrint('Mention participant fetch failed: $error');
+      return const [];
+    }
+  }
+
+  List<User> _filterMentionSuggestions(String query) {
+    final normalizedQuery = query.trim().toLowerCase();
+    final ranked =
+        _mentionableUsers
+            .map((user) {
+              final displayName = _mentionDisplayName(user).toLowerCase();
+              final mxid = user.id.toLowerCase();
+              final localpart = user.id.localpart?.toLowerCase() ?? '';
+              final startsWith =
+                  displayName.startsWith(normalizedQuery) ||
+                  localpart.startsWith(normalizedQuery) ||
+                  mxid.startsWith(normalizedQuery);
+              final contains =
+                  normalizedQuery.isEmpty ||
+                  displayName.contains(normalizedQuery) ||
+                  localpart.contains(normalizedQuery) ||
+                  mxid.contains(normalizedQuery);
+              return (user: user, startsWith: startsWith, contains: contains);
+            })
+            .where((entry) => entry.contains)
+            .toList()
+          ..sort((a, b) {
+            if (a.startsWith != b.startsWith) {
+              return a.startsWith ? -1 : 1;
+            }
+            final nameCompare = _mentionDisplayName(a.user)
+                .toLowerCase()
+                .compareTo(_mentionDisplayName(b.user).toLowerCase());
+            if (nameCompare != 0) return nameCompare;
+            return a.user.id.toLowerCase().compareTo(b.user.id.toLowerCase());
+          });
+
+    return ranked.take(6).map((entry) => entry.user).toList();
+  }
+
+  String _mentionDisplayName(User user) {
+    final displayName = user.calcDisplayname().trim();
+    return displayName.isEmpty ? user.id : displayName;
+  }
+
+  void _insertMention(User user) {
+    final selection = _messageController.selection;
+    final mentionStart = _activeMentionStart;
+    final cursor = selection.isValid
+        ? selection.extentOffset.clamp(0, _messageController.text.length)
+        : _messageController.text.length;
+    if (mentionStart == null || mentionStart > cursor) return;
+
+    final replacement = '${user.mention} ';
+    final newText = _messageController.text.replaceRange(
+      mentionStart,
+      cursor,
+      replacement,
+    );
+    final offset = mentionStart + replacement.length;
+    _messageController.value = TextEditingValue(
+      text: newText,
+      selection: TextSelection.collapsed(offset: offset),
+    );
+    _messageFocusNode.requestFocus();
+    _clearMentionSuggestions();
   }
 
   Widget _buildUnverifiedWarning() {
@@ -967,20 +1140,104 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  void _addPendingMedia(
+    Iterable<XFile> media, {
+    bool closeAttachmentMenu = false,
+  }) {
+    if (!mounted) return;
+    final pendingMedia = media.toList();
+    if (pendingMedia.isEmpty) return;
+    setState(() {
+      _pendingImages.addAll(pendingMedia);
+      if (closeAttachmentMenu) {
+        _isAttachmentMenuOpen = false;
+      }
+    });
+  }
+
+  Future<bool> _confirmSendToUnverifiedDevices(Room room) async {
+    if (!room.encrypted) return true;
+
+    final healthState = await room.calcEncryptionHealthState();
+    if (healthState != EncryptionHealthState.unverifiedDevices) {
+      return true;
+    }
+
+    final participants = await room.requestParticipants();
+    if (!mounted) return false;
+
+    final names =
+        participants
+            .where(
+              (user) => {
+                Membership.invite,
+                Membership.join,
+              }.contains(user.membership),
+            )
+            .where(
+              (user) =>
+                  room.client.userDeviceKeys[user.id]?.verified !=
+                  UserVerifiedStatus.verified,
+            )
+            .map((user) => user.calcDisplayname().trim())
+            .where((name) => name.isNotEmpty)
+            .toSet()
+            .toList()
+          ..sort();
+
+    String affectedDevicesLabel;
+    if (names.isEmpty) {
+      affectedDevicesLabel = 'This room has unverified Matrix devices.';
+    } else if (names.length == 1) {
+      affectedDevicesLabel =
+          'This room has unverified Matrix devices for ${names.first}.';
+    } else if (names.length == 2) {
+      affectedDevicesLabel =
+          'This room has unverified Matrix devices for ${names[0]} and ${names[1]}.';
+    } else {
+      affectedDevicesLabel =
+          'This room has unverified Matrix devices for ${names[0]}, ${names[1]}, and ${names.length - 2} others.';
+    }
+
+    final shouldSend =
+        await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) {
+            return AlertDialog(
+              title: const Text('Send to unverified devices?'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(affectedDevicesLabel),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Sending now will share this room key with those devices so they can decrypt your message.',
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(false),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(true),
+                  child: const Text('Send anyway'),
+                ),
+              ],
+            );
+          },
+        ) ??
+        false;
+
+    return shouldSend;
+  }
+
   Future<void> _sendMessage() async {
     final text = _messageController.text.trim();
     final images = List<XFile>.from(_pendingImages);
     if (text.isEmpty && images.isEmpty) return;
-
-    HapticFeedback.lightImpact();
-    _messageController.clear();
-    setState(() => _pendingImages.clear());
-    final replyTo = _replyingToEvent;
-    final editing = _editingEvent;
-    setState(() {
-      _replyingToEvent = null;
-      _editingEvent = null;
-    });
 
     try {
       final client = Get.find<AuthController>().client;
@@ -990,6 +1247,17 @@ class _ChatScreenState extends State<ChatScreen> {
         Get.snackbar('Error', 'Room not found');
         return;
       }
+      if (!await _confirmSendToUnverifiedDevices(room)) return;
+
+      HapticFeedback.lightImpact();
+      _messageController.clear();
+      setState(() => _pendingImages.clear());
+      final replyTo = _replyingToEvent;
+      final editing = _editingEvent;
+      setState(() {
+        _replyingToEvent = null;
+        _editingEvent = null;
+      });
       if (editing != null && text.isNotEmpty) {
         await room.sendTextEvent(text, editEventId: editing.rawEvent.eventId);
       } else if (replyTo != null && text.isNotEmpty) {
@@ -1470,13 +1738,15 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _takePhoto() async {
     if (!await requestCameraPermission(context)) return;
     try {
-      final photo = await _imagePicker.pickImage(source: ImageSource.camera);
+      final photo = await _imagePicker.pickImage(
+        source: ImageSource.camera,
+        maxWidth: _pickedImageMaxDimension,
+        maxHeight: _pickedImageMaxDimension,
+        imageQuality: _pickedImageQuality,
+        requestFullMetadata: false,
+      );
       if (photo == null) return;
-      if (!mounted) return;
-      setState(() {
-        _pendingImages.add(photo);
-        _isAttachmentMenuOpen = false;
-      });
+      _addPendingMedia([photo], closeAttachmentMenu: true);
     } catch (error) {
       if (!mounted) return;
       Get.snackbar('Error', 'Camera error: $error');
@@ -1486,9 +1756,14 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _pickGalleryImage() async {
     if (!await requestPhotosPermission(context)) return;
     try {
-      final media = await _imagePicker.pickMultipleMedia();
+      final media = await _imagePicker.pickMultipleMedia(
+        maxWidth: _pickedImageMaxDimension,
+        maxHeight: _pickedImageMaxDimension,
+        imageQuality: _pickedImageQuality,
+        requestFullMetadata: false,
+      );
       if (media.isEmpty) return;
-      setState(() => _pendingImages.addAll(media));
+      _addPendingMedia(media, closeAttachmentMenu: true);
     } catch (error) {
       if (!mounted) return;
       Get.snackbar('Error', 'Gallery error: $error');
@@ -1517,7 +1792,7 @@ class _ChatScreenState extends State<ChatScreen> {
               mime = 'image/bmp';
           }
           final media = XFile(path, mimeType: mime);
-          setState(() => _pendingImages.add(media));
+          _addPendingMedia([media]);
         }
         if (!mounted) return;
         Get.snackbar('', 'Image pasted');
@@ -1536,7 +1811,7 @@ class _ChatScreenState extends State<ChatScreen> {
       final file = File(path);
       await file.writeAsBytes(imageBytes);
       final media = XFile(path, mimeType: 'image/png');
-      setState(() => _pendingImages.add(media));
+      _addPendingMedia([media]);
       if (!mounted) return;
       Get.snackbar('', 'Image pasted');
     } catch (error) {
@@ -1561,7 +1836,7 @@ class _ChatScreenState extends State<ChatScreen> {
       final file = File(path);
       await file.writeAsBytes(bytes);
       final media = XFile(path, mimeType: mime);
-      setState(() => _pendingImages.add(media));
+      _addPendingMedia([media]);
     } catch (error) {
       if (!mounted) return;
       Get.snackbar('Error', 'Insert failed: $error');
@@ -1596,7 +1871,7 @@ class _ChatScreenState extends State<ChatScreen> {
         Get.snackbar('Error', 'Image file is empty');
         return;
       }
-      final bytes = Uint8List.fromList(await file.readAsBytes());
+      final bytes = await file.readAsBytes();
       final client = Get.find<AuthController>().client;
       final room = client.getRoomById(widget.room.id);
       if (room == null) {
@@ -1633,7 +1908,7 @@ class _ChatScreenState extends State<ChatScreen> {
         Get.snackbar('Error', 'Video file is empty');
         return;
       }
-      final bytes = Uint8List.fromList(await file.readAsBytes());
+      final bytes = await file.readAsBytes();
       final client = Get.find<AuthController>().client;
       final room = client.getRoomById(widget.room.id);
       if (room == null) {
@@ -1681,6 +1956,20 @@ class _ChatScreenState extends State<ChatScreen> {
                         width: 60,
                         height: 60,
                         fit: BoxFit.cover,
+                        cacheWidth: _previewDecodeSize,
+                        cacheHeight: _previewDecodeSize,
+                        filterQuality: FilterQuality.low,
+                        errorBuilder: (_, _, _) => Container(
+                          width: 60,
+                          height: 60,
+                          color: cs.surfaceContainerHighest,
+                          alignment: Alignment.center,
+                          child: Icon(
+                            Icons.broken_image_outlined,
+                            size: 20,
+                            color: cs.onSurfaceVariant,
+                          ),
+                        ),
                       ),
               ),
               if (isVideo)
@@ -1758,6 +2047,7 @@ class _ChatScreenState extends State<ChatScreen> {
         Get.snackbar('Error', 'Room not found');
         return;
       }
+      if (!await _confirmSendToUnverifiedDevices(room)) return;
 
       final matrixFile = MatrixFile(bytes: bytes, name: file.name);
       await room.sendFileEvent(matrixFile);
@@ -1811,6 +2101,14 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _sendPreviewAudio(File file) async {
+    final client = Get.find<AuthController>().client;
+    final room = client.getRoomById(widget.room.id);
+    if (room == null) {
+      if (!mounted) return;
+      Get.snackbar('Error', 'Room not found');
+      return;
+    }
+    if (!await _confirmSendToUnverifiedDevices(room)) return;
     setState(() => _recordedAudioFile = null);
     await _sendAudioFile(file);
   }
@@ -1906,6 +2204,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    PushNotificationService().setActiveRoom(null);
     _messageController.dispose();
     _messageFocusNode.dispose();
     _scrollController.dispose();

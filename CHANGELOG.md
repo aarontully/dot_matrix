@@ -2,6 +2,33 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+### Added
+- **Notification opt-in onboarding** — fresh sign-ins now get a one-time prompt asking whether DotMatrix should turn notifications on, and the choice is saved for later.
+- **`@` mention suggestions in chat** — the composer now suggests room members as you type `@`, including bridged accounts, and inserts Matrix-resolvable mentions for the selected user.
+- **Basic other-user profile screen** — member rows in Chat Info now open a lightweight profile view showing avatar, name, Matrix ID, bridge detection, and a quick local action to mark that account as one of your bridge identities.
+- **Visible-member room avatars** — one-to-one bridged chats now derive header avatars from the same filtered visible members list, so your own bridge identities and bridge bots do not leak back into the room avatar.
+
+### Changed
+- **Notification preferences** — the in-app Notifications screen now requests system permission when you enable alerts and explains the current local-alert versus background-push behavior more clearly.
+- **Notification gateway setup** — the Notifications screen now lets you save or clear the Matrix push gateway URL that DotMatrix registers for real background delivery.
+- **Automatic gateway reuse** — DotMatrix now tries to reuse an existing Matrix HTTP pusher on the account before asking for any manual push gateway configuration.
+- **Built-in gateway fallback** — DotMatrix can now fall back to an app-wide default Matrix push gateway configured at build time, so first-time Matrix users do not need to enter a push URL manually.
+- **Push setup guidance** — the project docs and Firebase runtime logging now call out the exact Android, iOS, APNs, and Matrix push-gateway pieces still required for real background delivery.
+- **Bridge identity updates refresh rooms immediately** — adding or removing an "also me" account now refreshes room summaries right away so member counts and bridge filtering stay in sync.
+- **Media scrolling path is lighter** — chat bubbles now cache resolved media preview state, decode preview images closer to display size, and defer full encrypted video downloads until you actually tap the video instead of doing that work while scrolling.
+
+### Fixed
+- **Mention name rendering** — sent and received mentions now display as readable `@Name` text in the timeline instead of raw Matrix mention syntax or bridged MXIDs.
+- **Live message notifications** — DotMatrix now raises real local notifications for new Matrix events, including mentions/highlighted activity, while suppressing alerts for your own sends and the room you already have open.
+- **Android Firebase config discovery** — `google-services.json` now lives in `android/app/`, allowing the Google Services plugin to generate the Firebase resource values that `Firebase.initializeApp()` expects at runtime.
+- **Activity feed scope** — the Activity tab now only surfaces interactions that are directly related to you: replies to your messages, mentions of you, and reactions to your messages. General messages from others in group chats are no longer shown here.
+- **Camera/gallery send stability** — picked image previews now decode at thumbnail size, camera/gallery imports are resized before staging, and image/video sends avoid an extra byte-copy so sending large photos is much less likely to freeze or crash the composer.
+- **Unverified-device send confirmation** — encrypted chats now warn before sending when the room has unverified Matrix devices, so people can choose whether to share room keys with those devices.
+- **Media send-state badges** — image, video, audio, and upload-placeholder bubbles now show the same pending/sent/error status indicator as text messages, driven from the underlying Matrix event status.
+- **Session removal re-authentication** — removing another signed-in device now handles Matrix homeservers that require password confirmation for device deletion instead of failing with a forbidden error.
+
 ## [v1.0.5-alpha] - 2026-05-21
 
 ### Fixed

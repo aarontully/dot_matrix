@@ -1,3 +1,4 @@
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
@@ -21,7 +22,6 @@ import '../models/room_model.dart';
 import '../theme/app_theme.dart';
 import '../utils/avatar_url_resolver.dart';
 import '../utils/matrix_media_uri.dart';
-import '../utils/video_thumbnail_helper.dart';
 import '../screens/video_player_screen.dart';
 
 enum MessageAction {
@@ -63,6 +63,15 @@ class MessageBubble extends StatelessWidget {
   onAction;
 
   bool get _isRedacted => event.rawEvent.redactedBecause != null;
+
+  static IconData _statusIconFor(AppEvent event) {
+    return event.rawEvent.status == EventStatus.sending
+        ? Icons.access_time
+        : (event.rawEvent.status == EventStatus.sent ||
+              event.rawEvent.status == EventStatus.synced)
+        ? Icons.done_all
+        : Icons.error_outline;
+  }
 
   Widget? _buildReplyReference(_BubbleFill bubbleFill) {
     final target = replyToEvent;
@@ -136,6 +145,7 @@ class MessageBubble extends StatelessWidget {
         borderRadius: _borderRadius(),
         child: _MediaAttachmentBubble(
           event: event,
+          isMe: isMe,
           textColor: bubbleFill.textColor,
           onImageTap: (provider, bytes, url) =>
               _showFullScreenImage(context, provider, bytes: bytes, url: url),
@@ -168,6 +178,7 @@ class MessageBubble extends StatelessWidget {
     if (event.isAudio) {
       final audio = _AudioAttachmentBubble(
         event: event,
+        isMe: isMe,
         textColor: bubbleFill.textColor,
         bubbleColor: bubbleFill.color,
         borderRadius: _borderRadius(),
@@ -239,41 +250,13 @@ class MessageBubble extends StatelessWidget {
                   ),
             Padding(
               padding: const EdgeInsets.only(top: 4),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    _timeFormat.format(event.originServerTs),
-                    style: TextStyle(
-                      fontSize: 10,
-                      color: bubbleFill.textColor.withValues(alpha: 0.5),
-                    ),
-                  ),
-                  if (isMe) ...[
-                    const SizedBox(width: 6),
-                    Icon(
-                      event.rawEvent.status == EventStatus.sending
-                          ? Icons.access_time
-                          : (event.rawEvent.status == EventStatus.sent ||
-                                event.rawEvent.status == EventStatus.synced)
-                          ? Icons.done_all
-                          : Icons.error_outline,
-                      size: 14,
-                      color: bubbleFill.textColor.withValues(alpha: 0.5),
-                    ),
-                    if (event.isEdited) ...[
-                      const SizedBox(width: 6),
-                      Text(
-                        'Edited',
-                        style: TextStyle(
-                          color: bubbleFill.textColor.withValues(alpha: 0.6),
-                          fontSize: 11,
-                          fontStyle: FontStyle.italic,
-                        ),
-                      ),
-                    ],
-                  ],
-                ],
+              child: _MessageMeta(
+                event: event,
+                isMe: isMe,
+                textColor: bubbleFill.textColor,
+                timeFormat: _timeFormat,
+                statusIcon: _statusIconFor(event),
+                showEdited: event.isEdited,
               ),
             ),
           ],
@@ -1822,6 +1805,61 @@ class MessageBubble extends StatelessWidget {
   }
 }
 
+class _MessageMeta extends StatelessWidget {
+  const _MessageMeta({
+    required this.event,
+    required this.isMe,
+    required this.textColor,
+    required this.timeFormat,
+    required this.statusIcon,
+    this.showEdited = false,
+    this.onDarkBackground = false,
+  });
+
+  final AppEvent event;
+  final bool isMe;
+  final Color textColor;
+  final DateFormat timeFormat;
+  final IconData statusIcon;
+  final bool showEdited;
+  final bool onDarkBackground;
+
+  @override
+  Widget build(BuildContext context) {
+    final metaColor = onDarkBackground
+        ? Colors.white70
+        : textColor.withValues(alpha: 0.5);
+    final editedColor = onDarkBackground
+        ? Colors.white70
+        : textColor.withValues(alpha: 0.6);
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          timeFormat.format(event.originServerTs),
+          style: TextStyle(fontSize: 10, color: metaColor),
+        ),
+        if (isMe) ...[
+          const SizedBox(width: 6),
+          Icon(statusIcon, size: 14, color: metaColor),
+        ],
+        if (showEdited) ...[
+          const SizedBox(width: 6),
+          Text(
+            'Edited',
+            style: TextStyle(
+              color: editedColor,
+              fontSize: 11,
+              fontStyle: FontStyle.italic,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
 class _ActionButton extends StatelessWidget {
   final IconData icon;
   final String label;
@@ -1872,8 +1910,53 @@ class _BubbleFill {
   final Color textColor;
 }
 
+class _CachedMediaState {
+  const _CachedMediaState({
+    this.previewUrlCandidates = const [],
+    this.fullImageUrl,
+    this.decryptedPreviewBytes,
+    this.decryptedFullBytes,
+    this.error,
+    this.bridgeImageWidth,
+    this.bridgeImageHeight,
+    this.usedBridgeFallback = false,
+    this.deferredEncryptedVideo = false,
+  });
+
+  final List<String> previewUrlCandidates;
+  final String? fullImageUrl;
+  final Uint8List? decryptedPreviewBytes;
+  final Uint8List? decryptedFullBytes;
+  final String? error;
+  final double? bridgeImageWidth;
+  final double? bridgeImageHeight;
+  final bool usedBridgeFallback;
+  final bool deferredEncryptedVideo;
+}
+
+const int _maxCachedMediaStates = 80;
+final LinkedHashMap<String, _CachedMediaState> _cachedMediaStates =
+    LinkedHashMap<String, _CachedMediaState>();
+
+_CachedMediaState? _readCachedMediaState(String key) {
+  final cached = _cachedMediaStates.remove(key);
+  if (cached != null) {
+    _cachedMediaStates[key] = cached;
+  }
+  return cached;
+}
+
+void _writeCachedMediaState(String key, _CachedMediaState state) {
+  _cachedMediaStates.remove(key);
+  _cachedMediaStates[key] = state;
+  while (_cachedMediaStates.length > _maxCachedMediaStates) {
+    _cachedMediaStates.remove(_cachedMediaStates.keys.first);
+  }
+}
+
 class _MediaAttachmentBubble extends StatefulWidget {
   final AppEvent event;
+  final bool isMe;
   final Color textColor;
   final void Function(
     ImageProvider imageProvider,
@@ -1884,6 +1967,7 @@ class _MediaAttachmentBubble extends StatefulWidget {
 
   const _MediaAttachmentBubble({
     required this.event,
+    required this.isMe,
     required this.textColor,
     this.onImageTap,
   });
@@ -1894,6 +1978,8 @@ class _MediaAttachmentBubble extends StatefulWidget {
 
 class _MediaAttachmentBubbleState extends State<_MediaAttachmentBubble> {
   Event get _renderEvent => widget.event.displayEvent;
+  String get _mediaCacheKey =>
+      '${_renderEvent.eventId}|${_renderEvent.content.toString()}';
 
   /// HTTP URLs to try in order (unencrypted media only).
   List<String> _previewUrlCandidates = const [];
@@ -1907,10 +1993,12 @@ class _MediaAttachmentBubbleState extends State<_MediaAttachmentBubble> {
   Uint8List? _decryptedFullBytes;
   String? _error;
   bool _isLoading = true;
+  bool _isOpeningVideo = false;
   bool _advancePreviewFromErrorScheduled = false;
   double? _bridgeImageWidth;
   double? _bridgeImageHeight;
   bool _usedBridgeFallback = false;
+  bool _deferredEncryptedVideo = false;
 
   /// Some bridges (e.g. Google Messages) embed the image as base64 inside
   /// a custom content key rather than using an mxc URL.
@@ -2037,6 +2125,11 @@ class _MediaAttachmentBubbleState extends State<_MediaAttachmentBubble> {
   @override
   void initState() {
     super.initState();
+    final cached = _readCachedMediaState(_mediaCacheKey);
+    if (cached != null) {
+      _applyCachedState(cached);
+      return;
+    }
     _loadMedia();
   }
 
@@ -2054,10 +2147,60 @@ class _MediaAttachmentBubbleState extends State<_MediaAttachmentBubble> {
       _bridgeImageWidth = null;
       _bridgeImageHeight = null;
       _usedBridgeFallback = false;
+      _deferredEncryptedVideo = false;
       _error = null;
       _isLoading = true;
+      final cached = _readCachedMediaState(_mediaCacheKey);
+      if (cached != null) {
+        _applyCachedState(cached);
+        return;
+      }
       _loadMedia();
     }
+  }
+
+  void _applyCachedState(_CachedMediaState cached) {
+    _previewUrlCandidates = cached.previewUrlCandidates;
+    _previewCandidateIndex = 0;
+    _fullImageUrl = cached.fullImageUrl;
+    _decryptedPreviewBytes = cached.decryptedPreviewBytes;
+    _decryptedFullBytes = cached.decryptedFullBytes;
+    _error = cached.error;
+    _bridgeImageWidth = cached.bridgeImageWidth;
+    _bridgeImageHeight = cached.bridgeImageHeight;
+    _usedBridgeFallback = cached.usedBridgeFallback;
+    _deferredEncryptedVideo = cached.deferredEncryptedVideo;
+    _isLoading = false;
+  }
+
+  void _cacheCurrentState() {
+    if (_isLoading) return;
+    _writeCachedMediaState(
+      _mediaCacheKey,
+      _CachedMediaState(
+        previewUrlCandidates: List<String>.from(_previewUrlCandidates),
+        fullImageUrl: _fullImageUrl,
+        decryptedPreviewBytes: _decryptedPreviewBytes,
+        decryptedFullBytes: _decryptedFullBytes,
+        error: _error,
+        bridgeImageWidth: _bridgeImageWidth,
+        bridgeImageHeight: _bridgeImageHeight,
+        usedBridgeFallback: _usedBridgeFallback,
+        deferredEncryptedVideo: _deferredEncryptedVideo,
+      ),
+    );
+  }
+
+  Future<Uint8List> _matrixMediaGet(Client client, Uri url) async {
+    final fixed = withMatrixMediaAllowRedirect(
+      upgradeMatrixMediaV3UrlToClientV1(url),
+    );
+    final headers = <String, String>{};
+    if (client.accessToken != null) {
+      headers['Authorization'] = 'Bearer ${client.accessToken}';
+    }
+    final res = await client.httpClient.get(fixed, headers: headers);
+    return res.bodyBytes;
   }
 
   Future<void> _loadMedia() async {
@@ -2106,57 +2249,70 @@ class _MediaAttachmentBubbleState extends State<_MediaAttachmentBubble> {
             _decryptedPreviewBytes = bridgeBytes;
             _decryptedFullBytes = bridgeBytes;
             _usedBridgeFallback = true;
+            _deferredEncryptedVideo = false;
             _isLoading = false;
           });
+          _cacheCurrentState();
         }
         return;
       }
 
       if (ev.isAttachmentEncrypted) {
-        Future<Uint8List> matrixMediaGet(Uri url) async {
-          final fixed = withMatrixMediaAllowRedirect(
-            upgradeMatrixMediaV3UrlToClientV1(url),
-          );
-          final headers = <String, String>{};
-          if (client.accessToken != null) {
-            headers['Authorization'] = 'Bearer ${client.accessToken}';
-          }
-          final res = await client.httpClient.get(fixed, headers: headers);
-          return res.bodyBytes;
-        }
+        final isVideo = _renderEvent.messageType == MessageTypes.Video;
 
-        try {
-          final mainFile = await ev.downloadAndDecryptAttachment(
-            getThumbnail: false,
-            downloadCallback: matrixMediaGet,
-          );
-          final isVideo = _renderEvent.messageType == MessageTypes.Video;
+        if (isVideo) {
           Uint8List? previewBytes;
           if (ev.hasThumbnail && !_isGif) {
             try {
               final thumb = await ev.downloadAndDecryptAttachment(
                 getThumbnail: true,
-                downloadCallback: matrixMediaGet,
+                downloadCallback: (url) => _matrixMediaGet(client, url),
               );
               previewBytes = thumb.bytes;
             } catch (_) {
-              // Thumbnail decrypt failed; will show placeholder for video.
+              // Thumbnail decrypt failed; fall back to a cheap placeholder.
             }
           }
-          if (previewBytes == null && isVideo) {
-            previewBytes = await generateVideoThumbnailBytesFromBytes(
-              mainFile.bytes,
-              fileName: widget.event.body,
-            );
+
+          if (mounted) {
+            setState(() {
+              _decryptedPreviewBytes = previewBytes;
+              _decryptedFullBytes = null;
+              _usedBridgeFallback = false;
+              _deferredEncryptedVideo = true;
+              _isLoading = false;
+            });
+            _cacheCurrentState();
+          }
+          return;
+        }
+
+        try {
+          final mainFile = await ev.downloadAndDecryptAttachment(
+            getThumbnail: false,
+            downloadCallback: (url) => _matrixMediaGet(client, url),
+          );
+          Uint8List? previewBytes;
+          if (ev.hasThumbnail && !_isGif) {
+            try {
+              final thumb = await ev.downloadAndDecryptAttachment(
+                getThumbnail: true,
+                downloadCallback: (url) => _matrixMediaGet(client, url),
+              );
+              previewBytes = thumb.bytes;
+            } catch (_) {
+              // Thumbnail decrypt failed; fall back to the main image bytes.
+            }
           }
           if (mounted) {
             setState(() {
-              _decryptedPreviewBytes =
-                  previewBytes ?? (isVideo ? null : mainFile.bytes);
+              _decryptedPreviewBytes = previewBytes ?? mainFile.bytes;
               _decryptedFullBytes = mainFile.bytes;
               _usedBridgeFallback = false;
+              _deferredEncryptedVideo = false;
               _isLoading = false;
             });
+            _cacheCurrentState();
           }
           return;
         } catch (_) {
@@ -2260,8 +2416,10 @@ class _MediaAttachmentBubbleState extends State<_MediaAttachmentBubble> {
             _previewUrlCandidates = previewCandidates;
             _previewCandidateIndex = 0;
             _usedBridgeFallback = false;
+            _deferredEncryptedVideo = false;
             _isLoading = false;
           });
+          _cacheCurrentState();
         }
       } else if (isVideo &&
           _fullImageUrl != null &&
@@ -2271,8 +2429,10 @@ class _MediaAttachmentBubbleState extends State<_MediaAttachmentBubble> {
             _previewUrlCandidates = const [];
             _previewCandidateIndex = 0;
             _usedBridgeFallback = false;
+            _deferredEncryptedVideo = false;
             _isLoading = false;
           });
+          _cacheCurrentState();
         }
       } else {
         if (mounted) {
@@ -2280,6 +2440,7 @@ class _MediaAttachmentBubbleState extends State<_MediaAttachmentBubble> {
             _error = 'Media unavailable';
             _isLoading = false;
           });
+          _cacheCurrentState();
         }
       }
     } catch (e) {
@@ -2288,24 +2449,63 @@ class _MediaAttachmentBubbleState extends State<_MediaAttachmentBubble> {
           _error = 'Media unavailable';
           _isLoading = false;
         });
+        _cacheCurrentState();
       }
     }
   }
 
-  void _openVideo(
+  Future<void> _openVideo(
     BuildContext context, {
     Uint8List? decryptedBytes,
     String? videoUrl,
-  }) {
+  }) async {
     final client = Get.find<AuthController>().client;
     final ev = _renderEvent;
     final info = ev.content['info'];
     final mimetype = info is Map ? info['mimetype'] as String? : null;
 
+    var resolvedBytes = decryptedBytes;
+
+    if (resolvedBytes == null &&
+        videoUrl == null &&
+        ev.isAttachmentEncrypted &&
+        !_isOpeningVideo) {
+      if (mounted) {
+        setState(() => _isOpeningVideo = true);
+      }
+      try {
+        final file = await ev.downloadAndDecryptAttachment(
+          getThumbnail: false,
+          downloadCallback: (url) => _matrixMediaGet(client, url),
+        );
+        resolvedBytes = file.bytes;
+        if (mounted) {
+          setState(() {
+            _decryptedFullBytes = resolvedBytes;
+            _deferredEncryptedVideo = false;
+            _isOpeningVideo = false;
+          });
+          _cacheCurrentState();
+        }
+      } catch (_) {
+        if (mounted) {
+          setState(() => _isOpeningVideo = false);
+        }
+        if (context.mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('Unable to load video')));
+        }
+        return;
+      }
+    }
+
+    if (!context.mounted) return;
+
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => VideoPlayerScreen(
-          encryptedBytes: decryptedBytes,
+          encryptedBytes: resolvedBytes,
           videoUrl: videoUrl,
           httpHeaders: client.accessToken != null
               ? {'Authorization': 'Bearer ${client.accessToken}'}
@@ -2316,16 +2516,76 @@ class _MediaAttachmentBubbleState extends State<_MediaAttachmentBubble> {
     );
   }
 
+  Widget _buildVideoPlayOverlay() {
+    final isBusy = _isOpeningVideo || _isLoading;
+    return Container(
+      decoration: const BoxDecoration(
+        color: Colors.black45,
+        shape: BoxShape.circle,
+      ),
+      padding: const EdgeInsets.all(8),
+      child: isBusy
+          ? const SizedBox(
+              width: 32,
+              height: 32,
+              child: DotMatrixLoader(size: 20, dotSize: 3, color: Colors.white),
+            )
+          : const Icon(Icons.play_arrow, color: Colors.white, size: 32),
+    );
+  }
+
+  int _targetCacheExtent(BuildContext context, double logicalPixels) {
+    final ratio = MediaQuery.devicePixelRatioOf(context);
+    return math.max(1, (logicalPixels * ratio).round());
+  }
+
+  Widget _buildOverlayMeta() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: Colors.black45,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: _MessageMeta(
+        event: widget.event,
+        isMe: widget.isMe,
+        textColor: widget.textColor,
+        timeFormat: MessageBubble._timeFormat,
+        statusIcon: MessageBubble._statusIconFor(widget.event),
+        onDarkBackground: true,
+      ),
+    );
+  }
+
+  Widget _buildCenteredPlaceholder({
+    required double width,
+    required double height,
+    required Widget child,
+    Color backgroundColor = Colors.black,
+  }) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(12),
+      child: SizedBox(
+        width: width,
+        height: height,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            Positioned.fill(
+              child: DecoratedBox(
+                decoration: BoxDecoration(color: backgroundColor),
+                child: Center(child: child),
+              ),
+            ),
+            Positioned(right: 6, bottom: 6, child: _buildOverlayMeta()),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    if (_error != null) {
-      return _FilePlaceholder(
-        textColor: widget.textColor,
-        filename: widget.event.body,
-        error: _error!,
-      );
-    }
-
     final isVideo = _renderEvent.messageType == MessageTypes.Video;
 
     double aspectRatio = 1.0;
@@ -2352,6 +2612,7 @@ class _MediaAttachmentBubbleState extends State<_MediaAttachmentBubble> {
 
     const maxImageWidth = 250.0;
     const maxImageHeight = 250.0;
+    const fallbackPlaceholderSize = 150.0;
 
     double displayWidth = maxImageWidth;
     double displayHeight = maxImageWidth / aspectRatio;
@@ -2370,14 +2631,30 @@ class _MediaAttachmentBubbleState extends State<_MediaAttachmentBubble> {
     }
 
     if (_isLoading) {
-      return const SizedBox(
-        width: 150,
-        height: 150,
-        child: Center(child: DotMatrixLoader(size: 24, dotSize: 3)),
+      return _buildCenteredPlaceholder(
+        width: fallbackPlaceholderSize,
+        height: fallbackPlaceholderSize,
+        child: const Center(child: DotMatrixLoader(size: 24, dotSize: 3)),
+      );
+    }
+
+    if (_error != null) {
+      return Stack(
+        clipBehavior: Clip.none,
+        children: [
+          _FilePlaceholder(
+            textColor: widget.textColor,
+            filename: widget.event.body,
+            error: _error!,
+          ),
+          Positioned(right: 8, bottom: 8, child: _buildOverlayMeta()),
+        ],
       );
     }
 
     if (_decryptedPreviewBytes != null) {
+      final targetCacheWidth = _targetCacheExtent(context, displayWidth);
+      final targetCacheHeight = _targetCacheExtent(context, displayHeight);
       return ClipRRect(
         borderRadius: BorderRadius.circular(12),
         child: GestureDetector(
@@ -2403,7 +2680,9 @@ class _MediaAttachmentBubbleState extends State<_MediaAttachmentBubble> {
                   child: Image.memory(
                     _decryptedPreviewBytes!,
                     fit: BoxFit.contain,
-                    filterQuality: FilterQuality.high,
+                    cacheWidth: targetCacheWidth,
+                    cacheHeight: targetCacheHeight,
+                    filterQuality: FilterQuality.medium,
                     gaplessPlayback: true,
                     errorBuilder: (_, __, ___) => Container(
                       color: Colors.black,
@@ -2421,40 +2700,8 @@ class _MediaAttachmentBubbleState extends State<_MediaAttachmentBubble> {
                     ),
                   ),
                 ),
-                if (isVideo)
-                  Container(
-                    decoration: const BoxDecoration(
-                      color: Colors.black45,
-                      shape: BoxShape.circle,
-                    ),
-                    padding: const EdgeInsets.all(8),
-                    child: const Icon(
-                      Icons.play_arrow,
-                      color: Colors.white,
-                      size: 32,
-                    ),
-                  ),
-                Positioned(
-                  right: 6,
-                  bottom: 6,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 6,
-                      vertical: 2,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.black45,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      DateFormat.jm().format(widget.event.originServerTs),
-                      style: const TextStyle(
-                        fontSize: 10,
-                        color: Colors.white70,
-                      ),
-                    ),
-                  ),
-                ),
+                if (isVideo) _buildVideoPlayOverlay(),
+                Positioned(right: 6, bottom: 6, child: _buildOverlayMeta()),
               ],
             ),
           ),
@@ -2463,79 +2710,50 @@ class _MediaAttachmentBubbleState extends State<_MediaAttachmentBubble> {
     }
 
     if (_decryptedFullBytes != null && isVideo) {
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: GestureDetector(
-          onTap: () => _openVideo(context, decryptedBytes: _decryptedFullBytes),
-          child: Container(
-            width: displayWidth,
-            height: displayHeight,
-            decoration: BoxDecoration(
-              color: Colors.black,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: const Center(
-              child: Icon(
-                Icons.play_circle_filled,
-                color: Colors.white70,
-                size: 48,
-              ),
+      return GestureDetector(
+        onTap: () => _openVideo(context, decryptedBytes: _decryptedFullBytes),
+        child: _buildCenteredPlaceholder(
+          width: displayWidth,
+          height: displayHeight,
+          child: const Center(
+            child: Icon(
+              Icons.play_circle_filled,
+              color: Colors.white70,
+              size: 48,
             ),
           ),
         ),
       );
     }
 
+    if (isVideo && _deferredEncryptedVideo) {
+      return GestureDetector(
+        onTap: _isOpeningVideo ? null : () => _openVideo(context),
+        child: _buildCenteredPlaceholder(
+          width: displayWidth,
+          height: displayHeight,
+          child: _buildVideoPlayOverlay(),
+        ),
+      );
+    }
+
     if (_previewUrlCandidates.isEmpty) {
       if (isVideo && _fullImageUrl != null && _fullImageUrl!.isNotEmpty) {
-        return ClipRRect(
-          borderRadius: BorderRadius.circular(12),
-          child: GestureDetector(
-            onTap: () => _openVideo(context, videoUrl: _fullImageUrl),
+        return GestureDetector(
+          onTap: () => _openVideo(context, videoUrl: _fullImageUrl),
+          child: _buildCenteredPlaceholder(
+            width: displayWidth,
+            height: displayHeight,
             child: Container(
-              width: displayWidth,
-              height: displayHeight,
-              decoration: BoxDecoration(
-                color: Colors.black,
-                borderRadius: BorderRadius.circular(12),
+              decoration: const BoxDecoration(
+                color: Colors.black45,
+                shape: BoxShape.circle,
               ),
-              child: Stack(
-                alignment: Alignment.center,
-                children: [
-                  Container(
-                    decoration: BoxDecoration(
-                      color: Colors.black45,
-                      shape: BoxShape.circle,
-                    ),
-                    padding: const EdgeInsets.all(8),
-                    child: const Icon(
-                      Icons.play_arrow,
-                      color: Colors.white,
-                      size: 32,
-                    ),
-                  ),
-                  Positioned(
-                    right: 6,
-                    bottom: 6,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.black45,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        DateFormat.jm().format(widget.event.originServerTs),
-                        style: const TextStyle(
-                          fontSize: 10,
-                          color: Colors.white70,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
+              padding: const EdgeInsets.all(8),
+              child: const Icon(
+                Icons.play_arrow,
+                color: Colors.white,
+                size: 32,
               ),
             ),
           ),
@@ -2614,6 +2832,15 @@ class _MediaAttachmentBubbleState extends State<_MediaAttachmentBubble> {
                     if (client.accessToken != null)
                       'Authorization': 'Bearer ${client.accessToken}',
                   },
+                  memCacheWidth: _targetCacheExtent(context, displayWidth),
+                  memCacheHeight: _targetCacheExtent(context, displayHeight),
+                  maxWidthDiskCache: _targetCacheExtent(context, displayWidth),
+                  maxHeightDiskCache: _targetCacheExtent(
+                    context,
+                    displayHeight,
+                  ),
+                  fadeInDuration: Duration.zero,
+                  fadeOutDuration: Duration.zero,
                   fit: BoxFit.cover,
                   placeholder: (context, url) => Center(
                     child: DotMatrixLoader(
@@ -2659,37 +2886,8 @@ class _MediaAttachmentBubbleState extends State<_MediaAttachmentBubble> {
                   },
                 ),
               ),
-              if (isVideo)
-                Container(
-                  decoration: const BoxDecoration(
-                    color: Colors.black45,
-                    shape: BoxShape.circle,
-                  ),
-                  padding: const EdgeInsets.all(8),
-                  child: const Icon(
-                    Icons.play_arrow,
-                    color: Colors.white,
-                    size: 32,
-                  ),
-                ),
-              Positioned(
-                right: 6,
-                bottom: 6,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 6,
-                    vertical: 2,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.black45,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    DateFormat.jm().format(widget.event.originServerTs),
-                    style: const TextStyle(fontSize: 10, color: Colors.white70),
-                  ),
-                ),
-              ),
+              if (isVideo) _buildVideoPlayOverlay(),
+              Positioned(right: 6, bottom: 6, child: _buildOverlayMeta()),
             ],
           ),
         ),
@@ -2758,12 +2956,14 @@ class _FilePlaceholder extends StatelessWidget {
 /// Audio message bubble with inline play/pause, progress, and duration.
 class _AudioAttachmentBubble extends StatefulWidget {
   final AppEvent event;
+  final bool isMe;
   final Color textColor;
   final Color? bubbleColor;
   final BorderRadius borderRadius;
 
   const _AudioAttachmentBubble({
     required this.event,
+    required this.isMe,
     required this.textColor,
     this.bubbleColor,
     required this.borderRadius,
@@ -2982,12 +3182,12 @@ class _AudioAttachmentBubbleState extends State<_AudioAttachmentBubble> {
             ),
             Align(
               alignment: Alignment.centerRight,
-              child: Text(
-                DateFormat.jm().format(widget.event.originServerTs),
-                style: TextStyle(
-                  fontSize: 10,
-                  color: widget.textColor.withValues(alpha: 0.5),
-                ),
+              child: _MessageMeta(
+                event: widget.event,
+                isMe: widget.isMe,
+                textColor: widget.textColor,
+                timeFormat: MessageBubble._timeFormat,
+                statusIcon: MessageBubble._statusIconFor(widget.event),
               ),
             ),
           ],

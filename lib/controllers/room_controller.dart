@@ -415,7 +415,10 @@ class RoomController extends GetxController with StateMixin<List<AppRoom>> {
             var memberCount = 0;
             var bridgePlatform = BridgePlatform.unknown;
             try {
-              final members = await room.requestParticipants();
+              var members = room.getParticipants();
+              if (members.isEmpty) {
+                members = await room.requestParticipants();
+              }
               final alsoMe =
                   Get.find<SettingsController>().state?.alsoMeUserIds ?? [];
               final realMembers = members.where((m) {
@@ -448,36 +451,39 @@ class RoomController extends GetxController with StateMixin<List<AppRoom>> {
 
             // Find latest reaction from someone else for the activity feed
             AppReactionActivity? latestReactionActivity;
-            for (final ev in timeline.events) {
-              if (ev.type != EventTypes.Reaction) continue;
-              if (ev.senderId == client.userID) continue;
-              final relatesTo =
-                  ev.content['m.relates_to'] as Map<String, dynamic>?;
-              final emoji = relatesTo?['key'] as String?;
-              final targetId = relatesTo?['event_id'] as String?;
-              if (emoji == null || targetId == null) continue;
-              String targetBody = 'a message';
-              final targetEvent = timeline.events.firstWhereOrNull(
-                (e) => e.eventId == targetId,
-              );
-              if (targetEvent != null) {
-                targetBody = matrixEventDisplayText(
+            final myUserId = client.userID;
+            if (myUserId != null) {
+              for (final ev in timeline.events) {
+                if (ev.type != EventTypes.Reaction) continue;
+                if (ev.senderId == myUserId) continue;
+                final relatesTo =
+                    ev.content['m.relates_to'] as Map<String, dynamic>?;
+                final emoji = relatesTo?['key'] as String?;
+                final targetId = relatesTo?['event_id'] as String?;
+                if (emoji == null || targetId == null) continue;
+                final targetEvent = timeline.events.firstWhereOrNull(
+                  (e) => e.eventId == targetId,
+                );
+                if (targetEvent == null || targetEvent.senderId != myUserId) {
+                  continue;
+                }
+                final targetBody = matrixEventDisplayText(
                   targetEvent,
                   timeline: timeline,
                 );
-              }
-              final activity = AppReactionActivity(
-                senderId: ev.senderId,
-                senderName: ev.senderFromMemoryOrFallback.calcDisplayname(),
-                emoji: emoji,
-                targetMessageBody: targetBody,
-                timestamp: ev.originServerTs,
-              );
-              if (latestReactionActivity == null ||
-                  activity.timestamp.isAfter(
-                    latestReactionActivity.timestamp,
-                  )) {
-                latestReactionActivity = activity;
+                final activity = AppReactionActivity(
+                  senderId: ev.senderId,
+                  senderName: ev.senderFromMemoryOrFallback.calcDisplayname(),
+                  emoji: emoji,
+                  targetMessageBody: targetBody,
+                  timestamp: ev.originServerTs,
+                );
+                if (latestReactionActivity == null ||
+                    activity.timestamp.isAfter(
+                      latestReactionActivity.timestamp,
+                    )) {
+                  latestReactionActivity = activity;
+                }
               }
             }
 

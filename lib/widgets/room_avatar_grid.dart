@@ -64,6 +64,35 @@ class RoomAvatarGrid extends StatelessWidget {
 
     // If we have member avatars, build the 2×2 grid
     if (memberAvatarUrls.isNotEmpty) {
+      if (memberAvatarUrls.length == 1) {
+        final resolved = resolveAvatarImageUrl(
+          memberAvatarUrls.first,
+          client,
+          size: size.toInt() * 2,
+        );
+        if (resolved != null) {
+          return _buildCircleAvatar(
+            child: ClipOval(
+              child: CachedNetworkImage(
+                imageUrl: resolved,
+                httpHeaders: {
+                  if (client.accessToken != null)
+                    'Authorization': 'Bearer ${client.accessToken}',
+                },
+                width: size,
+                height: size,
+                fit: BoxFit.cover,
+                placeholder: (_, __) => _fallbackAvatar(cs),
+                errorWidget: (_, __, ___) {
+                  markAvatarSourceBroken(memberAvatarUrls.first);
+                  return _fallbackAvatar(cs);
+                },
+              ),
+            ),
+          );
+        }
+      }
+
       return _buildCircleAvatar(
         child: ClipOval(
           child: SizedBox(
@@ -190,7 +219,11 @@ class _MemberAvatarGrid extends StatelessWidget {
         color: const Color(0xFFE8ECF1),
       );
     }
-    final resolved = resolveAvatarImageUrl(list[index], client, size: cellSize.toInt() * 2);
+    final resolved = resolveAvatarImageUrl(
+      list[index],
+      client,
+      size: cellSize.toInt() * 2,
+    );
     if (resolved == null) {
       return Container(
         width: cellSize,

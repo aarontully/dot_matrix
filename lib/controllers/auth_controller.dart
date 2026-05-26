@@ -185,6 +185,7 @@ class AuthController extends GetxController with StateMixin<String?> {
       await (_client.roomsLoading ?? Future.value());
       debugPrint('[AuthController] Rooms loading completed.');
       _setupVerificationListener();
+      await PushNotificationService().bindClient(_client);
       await _maybeRegisterPusher();
       change(userId, status: RxStatus.success());
       await _maybePromptDeviceVerification();
@@ -243,6 +244,7 @@ class AuthController extends GetxController with StateMixin<String?> {
 
       clearBrokenAvatarSources();
       _setupVerificationListener();
+      await PushNotificationService().bindClient(_client);
       await _maybeRegisterPusher();
       change(loginResponse.userId, status: RxStatus.success());
       await _runFreshLoginOnboarding();
@@ -286,6 +288,7 @@ class AuthController extends GetxController with StateMixin<String?> {
     }
 
     await PushNotificationService().unregisterPusher();
+    PushNotificationService().unbindClient();
     try {
       debugPrint('[AuthController] Clearing stored session...');
       await _clearStoredSession();
@@ -303,10 +306,15 @@ class AuthController extends GetxController with StateMixin<String?> {
 
   Future<void> _maybeRegisterPusher() async {
     try {
-      final settings = Get.find<SettingsController>().state;
-      final url = settings?.pushGatewayUrl;
-      if (url != null && url.isNotEmpty) {
+      final settingsController = Get.find<SettingsController>();
+      final settings = settingsController.state;
+      final url = await settingsController.ensurePushGatewayUrl();
+      if (settings?.notificationsEnabled == true &&
+          url != null &&
+          url.isNotEmpty) {
         await PushNotificationService().registerPusher(url);
+      } else {
+        await PushNotificationService().unregisterPusher();
       }
     } catch (_) {
       // Best effort pusher registration.
@@ -323,12 +331,18 @@ class AuthController extends GetxController with StateMixin<String?> {
       final settingsController = Get.find<SettingsController>();
       await settingsController.refreshSettings();
 
-      final settings = settingsController.state;
+      var settings = settingsController.state;
       if (settings != null && settings.needsDeviceSetup) {
         await Get.to(
           () => const DeviceSetupScreen(launchedFromOnboarding: true),
           preventDuplicates: false,
         );
+        await settingsController.refreshSettings();
+        settings = settingsController.state;
+      }
+
+      if (settings != null && !settings.notificationsPromptSeen) {
+        await _promptForNotificationOptIn(settingsController);
       }
     } finally {
       _postLoginFlowInProgress = false;
@@ -349,6 +363,48 @@ class AuthController extends GetxController with StateMixin<String?> {
       ),
       barrierDismissible: false,
     );
+  }
+
+  Future<void> _promptForNotificationOptIn(
+    SettingsController settingsController,
+  ) async {
+    final enableNotifications = await Get.dialog<bool>(
+      AlertDialog(
+        title: const Text('Turn on notifications?'),
+        content: const Text(
+          'DotMatrix can alert you when new messages or mentions arrive. '
+          'You can change this any time in Settings.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Get.back(result: false),
+            child: const Text('Not now'),
+          ),
+          FilledButton(
+            onPressed: () => Get.back(result: true),
+            child: const Text('Turn on'),
+          ),
+        ],
+      ),
+      barrierDismissible: false,
+    );
+
+    if (enableNotifications == true) {
+      final granted = await settingsController.enableNotifications(
+        markPromptSeen: true,
+      );
+      if (!granted) {
+        await _showInfoDialog(
+          title: 'Notifications stay off',
+          message:
+              'DotMatrix could not get notification permission. You can turn '
+              'it on later from Settings > Notifications.',
+        );
+      }
+      return;
+    }
+
+    await settingsController.disableNotifications(markPromptSeen: true);
   }
 
   Future<void> _maybePromptDeviceVerification({

@@ -1128,15 +1128,30 @@ class _HomeScreenState extends State<HomeScreen> {
     return items;
   }
 
-  /// Latest timeline event from someone else: text, emote, image, video,
-  /// encrypted message, or reaction.
+  /// Latest timeline event from someone else that is related to the user:
+  /// a reply to the user's message or a message that mentions the user.
   AppEvent? _latestQualifyingActivityFromOthers(AppRoom room, String myUserId) {
     final sorted = List<AppEvent>.from(room.messages)
       ..sort((a, b) => b.originServerTs.compareTo(a.originServerTs));
+    final eventsById = {for (final e in room.messages) e.rawEvent.eventId: e};
     for (final e in sorted) {
       if (e.senderId == myUserId) continue;
       if (!_isActivityEligibleEvent(e.rawEvent)) continue;
-      return e;
+
+      final displayEvent = e.displayEvent;
+      if (displayEvent.relationshipType == RelationshipTypes.reply) {
+        final replyTarget = eventsById[displayEvent.relationshipEventId];
+        if (replyTarget != null && replyTarget.senderId == myUserId) {
+          return e;
+        }
+      }
+
+      final body = displayEvent.content['body'] as String? ?? '';
+      final formattedBody =
+          displayEvent.content['formatted_body'] as String? ?? '';
+      if (body.contains('@$myUserId') || formattedBody.contains('@$myUserId')) {
+        return e;
+      }
     }
     return null;
   }
