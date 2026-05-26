@@ -6,6 +6,7 @@ import '../controllers/settings_controller.dart';
 import '../models/settings_state.dart';
 import '../theme/app_theme.dart';
 import '../widgets/device_verification_dialog.dart';
+import '../widgets/device_verification_target_dialog.dart';
 import '../widgets/dot_matrix_loader.dart';
 
 class DeviceSetupScreen extends StatefulWidget {
@@ -513,8 +514,15 @@ class _DeviceSetupScreenState extends State<DeviceSetupScreen> {
 
   Future<void> _verifyDevice() async {
     try {
-      final request = await Get.find<SettingsController>()
-          .startDeviceVerification();
+      final settingsController = Get.find<SettingsController>();
+      final session = await chooseDeviceVerificationTarget(
+        settingsController: settingsController,
+      );
+      if (session == null) return;
+
+      final request = await settingsController.startDeviceVerification(
+        deviceId: session.deviceId,
+      );
       if (!mounted) return;
       await showDialog(
         context: context,

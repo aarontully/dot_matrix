@@ -7,6 +7,7 @@ import '../models/settings_state.dart';
 import 'device_setup_screen.dart';
 import '../theme/app_theme.dart';
 import '../widgets/device_verification_dialog.dart';
+import '../widgets/device_verification_target_dialog.dart';
 
 class EncryptionSettingsScreen extends StatefulWidget {
   const EncryptionSettingsScreen({super.key});
@@ -374,8 +375,15 @@ class _EncryptionSettingsScreenState extends State<EncryptionSettingsScreen> {
 
   Future<void> _verifyDevice() async {
     try {
-      final request = await Get.find<SettingsController>()
-          .startDeviceVerification();
+      final settingsController = Get.find<SettingsController>();
+      final session = await chooseDeviceVerificationTarget(
+        settingsController: settingsController,
+      );
+      if (session == null) return;
+
+      final request = await settingsController.startDeviceVerification(
+        deviceId: session.deviceId,
+      );
       if (!mounted) return;
       await showDialog(
         context: context,
@@ -384,7 +392,7 @@ class _EncryptionSettingsScreenState extends State<EncryptionSettingsScreen> {
       );
       if (!mounted) return;
 
-      await Get.find<SettingsController>().refreshAfterDeviceVerification();
+      await settingsController.refreshAfterDeviceVerification();
     } catch (error) {
       if (!mounted) return;
       _showError(error);

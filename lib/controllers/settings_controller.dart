@@ -619,9 +619,7 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
     final current = state;
     if (current == null) return;
 
-    final selected = await _imagePicker.pickImage(
-      source: ImageSource.gallery,
-    );
+    final selected = await _imagePicker.pickImage(source: ImageSource.gallery);
     if (selected == null) return;
 
     change(
@@ -760,7 +758,9 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
   }
 
   Future<String?> _readStoredPushGatewayUrl() async {
-    final secureValue = await _secureStorage.read(key: _pushGatewayUrlStorageKey);
+    final secureValue = await _secureStorage.read(
+      key: _pushGatewayUrlStorageKey,
+    );
     if (secureValue != null && secureValue.trim().isNotEmpty) {
       return secureValue.trim();
     }
@@ -796,7 +796,9 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
       throw Exception('Push gateway URLs must include a host.');
     }
     if (uri.userInfo.isNotEmpty || uri.fragment.isNotEmpty) {
-      throw Exception('Push gateway URLs cannot include credentials or fragments.');
+      throw Exception(
+        'Push gateway URLs cannot include credentials or fragments.',
+      );
     }
 
     final allowedHosts = <String>{
@@ -816,11 +818,15 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
         'This build only allows push gateways on approved hosts.',
       );
     }
-    return uri.replace(
-      fragment: null,
-      userInfo: '',
-      queryParameters: uri.queryParameters.isEmpty ? null : uri.queryParameters,
-    ).toString();
+    return uri
+        .replace(
+          fragment: null,
+          userInfo: '',
+          queryParameters: uri.queryParameters.isEmpty
+              ? null
+              : uri.queryParameters,
+        )
+        .toString();
   }
 
   Future<List<String>> _loadAlsoMeUserIdsFromAccountData(Client client) async {
@@ -882,15 +888,7 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
     return merged;
   }
 
-  bool _sameStringLists(List<String> a, List<String> b) {
-    if (a.length != b.length) return false;
-    for (var i = 0; i < a.length; i++) {
-      if (a[i] != b[i]) return false;
-    }
-    return true;
-  }
-
-  Future<List<DeviceSessionInfo>> fetchDeviceSessions() async {
+  Future<List<DeviceSessionInfo>> _loadDeviceSessions() async {
     final auth = Get.find<AuthController>();
     final client = auth.client;
     final userId = client.userID;
@@ -905,7 +903,7 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
     final ownKeys = client.userDeviceKeys[userId];
     final currentId = client.deviceID;
 
-    final list = devices.map((d) {
+    return devices.map((d) {
       final dk = ownKeys?.deviceKeys[d.deviceId];
       final DeviceVerificationLabel v;
       if (dk == null) {
@@ -927,6 +925,31 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
         verification: v,
       );
     }).toList();
+  }
+
+  int _verificationPriority(DeviceVerificationLabel label) {
+    switch (label) {
+      case DeviceVerificationLabel.verified:
+        return 0;
+      case DeviceVerificationLabel.unverified:
+        return 1;
+      case DeviceVerificationLabel.unknown:
+        return 2;
+      case DeviceVerificationLabel.blocked:
+        return 3;
+    }
+  }
+
+  bool _sameStringLists(List<String> a, List<String> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
+  Future<List<DeviceSessionInfo>> fetchDeviceSessions() async {
+    final list = await _loadDeviceSessions();
 
     list.sort((a, b) {
       if (a.isCurrentDevice != b.isCurrentDevice) {
@@ -938,6 +961,31 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
     });
 
     return list;
+  }
+
+  Future<List<DeviceSessionInfo>> fetchVerificationTargetSessions() async {
+    final list = await _loadDeviceSessions();
+    final candidates = list
+        .where(
+          (session) =>
+              !session.isCurrentDevice &&
+              session.verification != DeviceVerificationLabel.blocked,
+        )
+        .toList();
+
+    candidates.sort((a, b) {
+      final verificationCompare = _verificationPriority(
+        a.verification,
+      ).compareTo(_verificationPriority(b.verification));
+      if (verificationCompare != 0) {
+        return verificationCompare;
+      }
+      final ta = a.lastSeenTs ?? 0;
+      final tb = b.lastSeenTs ?? 0;
+      return tb.compareTo(ta);
+    });
+
+    return candidates;
   }
 
   Future<void> deleteDeviceSession(
@@ -1199,7 +1247,7 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
     await refreshSettings();
   }
 
-  Future<KeyVerification> startDeviceVerification() async {
+  Future<KeyVerification> startDeviceVerification({String? deviceId}) async {
     final client = Get.find<AuthController>().client;
     final encryption = client.encryption;
     if (encryption == null) {
@@ -1210,34 +1258,18 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
       throw Exception('Not signed in.');
     }
 
-    await client.updateUserDeviceKeys(additionalUsers: {userId});
-    await client.userDeviceKeysLoading;
-
-    final ownKeys = client.userDeviceKeys[userId];
-    final otherKeys =
-        ownKeys?.deviceKeys.values
-            .where((dk) => dk.deviceId != client.deviceID)
-            .toList() ??
-        [];
-
-    if (otherKeys.isEmpty) {
+    final candidates = await fetchVerificationTargetSessions();
+    if (candidates.isEmpty) {
       throw Exception('No other devices found on this account.');
     }
 
-    final serverDevices = await client.getDevices() ?? [];
-    final currentId = client.deviceID;
-    final candidates = serverDevices
-        .where((d) => d.deviceId != currentId)
-        .toList();
-    candidates.sort((a, b) {
-      final ta = a.lastSeenTs ?? 0;
-      final tb = b.lastSeenTs ?? 0;
-      return tb.compareTo(ta);
-    });
-
-    final targetDeviceId = candidates.isNotEmpty
-        ? candidates.first.deviceId
-        : otherKeys.first.deviceId;
+    final targetDeviceId = deviceId ?? candidates.first.deviceId;
+    final targetExists = candidates.any(
+      (candidate) => candidate.deviceId == targetDeviceId,
+    );
+    if (!targetExists) {
+      throw Exception('The selected device is no longer available.');
+    }
 
     final request = KeyVerification(
       encryption: encryption,

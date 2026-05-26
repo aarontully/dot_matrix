@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## [v1.0.7-alpha] - 2026-05-27
+
+### Changed
+- **Device verification target picker** — starting verification now shows your other logged-in sessions first instead of blindly targeting the most recently active device, with verified sessions surfaced at the top so you can choose which device should receive the SAS prompt.
+- **App icon sizing** — tightened the source logo padding and regenerated the launcher/web/desktop icon sets so the Dot Matrix mark reads larger in the app icon surfaces and tray-like system UI.
+
 ## [v1.0.6-alpha] - 2026-05-26
 
 ### Added

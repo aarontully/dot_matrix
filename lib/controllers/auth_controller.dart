@@ -17,6 +17,7 @@ import '../screens/device_setup_screen.dart';
 import 'room_controller.dart';
 import 'settings_controller.dart';
 import '../widgets/device_verification_dialog.dart';
+import '../widgets/device_verification_target_dialog.dart';
 
 class AuthController extends GetxController with StateMixin<String?> {
   static const _storageTokenKey = 'matrix_token';
@@ -473,8 +474,15 @@ class AuthController extends GetxController with StateMixin<String?> {
 
       if (hasVerified != true) return;
 
-      final request = await Get.find<SettingsController>()
-          .startDeviceVerification();
+      final settingsController = Get.find<SettingsController>();
+      final session = await chooseDeviceVerificationTarget(
+        settingsController: settingsController,
+      );
+      if (session == null) return;
+
+      final request = await settingsController.startDeviceVerification(
+        deviceId: session.deviceId,
+      );
       await Get.dialog(
         barrierDismissible: false,
         DeviceVerificationDialog(request: request),
@@ -484,7 +492,7 @@ class AuthController extends GetxController with StateMixin<String?> {
         await encryption.ssss.maybeRequestAll();
         await Get.find<RoomController>().requestMissingEncryptionKeys();
         await Get.find<RoomController>().refreshRooms(rebuildTimelines: true);
-        await Get.find<SettingsController>().refreshSettings();
+        await settingsController.refreshSettings();
       }
     } catch (_) {
       // Best effort prompt.
