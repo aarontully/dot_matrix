@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:get/get.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:image_picker/image_picker.dart';
@@ -40,22 +41,36 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
   static const _notificationsKey = 'notifications_enabled';
   static const _notificationsPromptSeenKey = 'notifications_prompt_seen';
   static const _pushGatewayUrlKey = 'push_gateway_url';
+  static const _pushGatewayUrlStorageKey = 'dot_matrix_push_gateway_url';
   static const _encryptMessagesKey = 'encrypt_messages';
   static const _appearanceKey = 'appearance';
   static const _chatSortOrderKey = 'chat_sort_order';
   static const _activeStatusKey = 'active_status_enabled';
   static const _customPrimaryColorKey = 'custom_primary_color';
   static const _alsoMeUserIdsKey = 'also_me_user_ids';
+  static const _alsoMeAccountDataType =
+      'com.housetully.dotmatrix.also_me_user_ids';
 
   final ImagePicker _imagePicker = ImagePicker();
+  final FlutterSecureStorage _secureStorage = const FlutterSecureStorage(
+    mOptions: MacOsOptions(useDataProtectionKeyChain: true),
+  );
+  late final VoidCallback _authListener;
 
   @override
   void onInit() {
     super.onInit();
-    Get.find<AuthController>().addListener(() {
+    _authListener = () {
       refreshSettings();
-    });
+    };
+    Get.find<AuthController>().addListener(_authListener);
     refreshSettings();
+  }
+
+  @override
+  void onClose() {
+    Get.find<AuthController>().removeListener(_authListener);
+    super.onClose();
   }
 
   Future<void> refreshSettings() async {
@@ -78,14 +93,26 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
     final notificationsPromptSeen =
         (box.get(_notificationsPromptSeenKey) as bool?) ??
         box.containsKey(_notificationsKey);
-    var pushGatewayUrl = box.get(_pushGatewayUrlKey) as String?;
+    var pushGatewayUrl = await _readStoredPushGatewayUrl();
     final encryptMessages = (box.get(_encryptMessagesKey) as bool?) ?? true;
     final alsoMeRaw = box.get(_alsoMeUserIdsKey) as List<dynamic>?;
-    final alsoMeUserIds =
+    final localAlsoMeUserIds =
         alsoMeRaw?.cast<String>().toList() ?? const <String>[];
     if (auth.state == null || client.userID == null) {
       change(null, status: RxStatus.success());
       return;
+    }
+
+    final remoteAlsoMeUserIds = await _loadAlsoMeUserIdsFromAccountData(client);
+    final alsoMeUserIds = _mergeUniqueUserIds(
+      localAlsoMeUserIds,
+      remoteAlsoMeUserIds,
+    );
+    if (!_sameStringLists(localAlsoMeUserIds, alsoMeUserIds)) {
+      await box.put(_alsoMeUserIdsKey, alsoMeUserIds);
+    }
+    if (!_sameStringLists(remoteAlsoMeUserIds, alsoMeUserIds)) {
+      await _persistAlsoMeUserIdsToAccountData(client, alsoMeUserIds);
     }
 
     if (pushGatewayUrl == null || pushGatewayUrl.isEmpty) {
@@ -305,16 +332,21 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
     final current = state;
     if (current == null) return;
 
-    final box = await _openBox();
-    if (url == null || url.isEmpty) {
-      await box.delete(_pushGatewayUrlKey);
+    final normalizedUrl = url?.trim();
+    if (normalizedUrl == null || normalizedUrl.isEmpty) {
+      await _writeStoredPushGatewayUrl(null);
       change(
         current.copyWith(clearPushGatewayUrl: true),
         status: RxStatus.success(),
       );
     } else {
-      await box.put(_pushGatewayUrlKey, url);
-      change(current.copyWith(pushGatewayUrl: url), status: RxStatus.success());
+      final client = Get.find<AuthController>().client;
+      final validatedUrl = _validatedPushGatewayUrl(normalizedUrl, client);
+      await _writeStoredPushGatewayUrl(validatedUrl);
+      change(
+        current.copyWith(pushGatewayUrl: validatedUrl),
+        status: RxStatus.success(),
+      );
     }
 
     final auth = Get.find<AuthController>();
@@ -358,13 +390,12 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
         return null;
       }
 
-      final box = await _openBox();
-      final existing = box.get(_pushGatewayUrlKey) as String?;
+      final existing = await _readStoredPushGatewayUrl();
       if (existing == discoveredUrl) {
         return discoveredUrl;
       }
 
-      await box.put(_pushGatewayUrlKey, discoveredUrl);
+      await _writeStoredPushGatewayUrl(discoveredUrl);
       if (persistToState) {
         final current = state;
         if (current != null) {
@@ -391,16 +422,20 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
       return null;
     }
 
-    final box = await _openBox();
-    final existing = box.get(_pushGatewayUrlKey) as String?;
-    if (existing != configuredDefault) {
-      await box.put(_pushGatewayUrlKey, configuredDefault);
+    final client = Get.find<AuthController>().client;
+    final validatedDefault = _validatedPushGatewayUrl(
+      configuredDefault,
+      client,
+    );
+    final existing = await _readStoredPushGatewayUrl();
+    if (existing != validatedDefault) {
+      await _writeStoredPushGatewayUrl(validatedDefault);
     }
 
     final current = state;
-    if (current != null && current.pushGatewayUrl != configuredDefault) {
+    if (current != null && current.pushGatewayUrl != validatedDefault) {
       change(
-        current.copyWith(pushGatewayUrl: configuredDefault),
+        current.copyWith(pushGatewayUrl: validatedDefault),
         status: RxStatus.success(),
       );
     }
@@ -408,7 +443,7 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
     debugPrint(
       '[Push] Using DotMatrix default push gateway: $configuredDefault',
     );
-    return configuredDefault;
+    return validatedDefault;
   }
 
   String? _pickExistingPushGatewayUrl(List<Pusher>? pushers) {
@@ -439,11 +474,10 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
     final trimmed = userId.trim();
     if (trimmed.isEmpty) return;
 
-    final box = await _openBox();
     final list = List<String>.from(current.alsoMeUserIds);
     if (!list.contains(trimmed)) {
       list.add(trimmed);
-      await box.put(_alsoMeUserIdsKey, list);
+      await _persistAlsoMeUserIds(list);
       change(current.copyWith(alsoMeUserIds: list), status: RxStatus.success());
       try {
         await Get.find<RoomController>().refreshRooms();
@@ -455,10 +489,9 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
     final current = state;
     if (current == null) return;
 
-    final box = await _openBox();
     final list = List<String>.from(current.alsoMeUserIds);
     if (list.remove(userId)) {
-      await box.put(_alsoMeUserIdsKey, list);
+      await _persistAlsoMeUserIds(list);
       change(current.copyWith(alsoMeUserIds: list), status: RxStatus.success());
       try {
         await Get.find<RoomController>().refreshRooms();
@@ -588,9 +621,6 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
 
     final selected = await _imagePicker.pickImage(
       source: ImageSource.gallery,
-      imageQuality: 88,
-      maxWidth: 1024,
-      maxHeight: 1024,
     );
     if (selected == null) return;
 
@@ -666,7 +696,11 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
       );
     }
 
-    await client.accountDataLoading;
+    await _awaitAccountDataLoading(
+      client,
+      timeoutMessage:
+          'Loading your encrypted-account data timed out. Check your network and try again.',
+    );
     final defaultKeyId = encryption.ssss.defaultKeyId;
     if (defaultKeyId == null) {
       throw Exception(
@@ -713,6 +747,147 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
       );
       rethrow;
     }
+  }
+
+  Future<void> _awaitAccountDataLoading(
+    Client client, {
+    required String timeoutMessage,
+  }) async {
+    await (client.accountDataLoading ?? Future.value()).timeout(
+      const Duration(seconds: 20),
+      onTimeout: () => throw TimeoutException(timeoutMessage),
+    );
+  }
+
+  Future<String?> _readStoredPushGatewayUrl() async {
+    final secureValue = await _secureStorage.read(key: _pushGatewayUrlStorageKey);
+    if (secureValue != null && secureValue.trim().isNotEmpty) {
+      return secureValue.trim();
+    }
+
+    final box = await _openBox();
+    final legacyValue = (box.get(_pushGatewayUrlKey) as String?)?.trim();
+    if (legacyValue != null && legacyValue.isNotEmpty) {
+      await _writeStoredPushGatewayUrl(legacyValue);
+      return legacyValue;
+    }
+    return null;
+  }
+
+  Future<void> _writeStoredPushGatewayUrl(String? url) async {
+    final box = await _openBox();
+    await box.delete(_pushGatewayUrlKey);
+    if (url == null || url.isEmpty) {
+      await _secureStorage.delete(key: _pushGatewayUrlStorageKey);
+      return;
+    }
+    await _secureStorage.write(key: _pushGatewayUrlStorageKey, value: url);
+  }
+
+  String _validatedPushGatewayUrl(String rawUrl, Client client) {
+    final uri = Uri.tryParse(rawUrl.trim());
+    if (uri == null || !uri.isAbsolute) {
+      throw Exception('Enter a full push gateway URL.');
+    }
+    if (uri.scheme != 'https') {
+      throw Exception('Push gateway URLs must use HTTPS.');
+    }
+    if (uri.host.isEmpty) {
+      throw Exception('Push gateway URLs must include a host.');
+    }
+    if (uri.userInfo.isNotEmpty || uri.fragment.isNotEmpty) {
+      throw Exception('Push gateway URLs cannot include credentials or fragments.');
+    }
+
+    final allowedHosts = <String>{
+      if (client.homeserver?.host case final host?) host.toLowerCase(),
+      ...configuredPushGatewayHosts().map((host) => host.toLowerCase()),
+    };
+    final defaultGateway = defaultPushGatewayUrl();
+    if (defaultGateway != null) {
+      final parsedDefault = Uri.tryParse(defaultGateway);
+      if (parsedDefault != null && parsedDefault.host.isNotEmpty) {
+        allowedHosts.add(parsedDefault.host.toLowerCase());
+      }
+    }
+    if (allowedHosts.isNotEmpty &&
+        !allowedHosts.contains(uri.host.toLowerCase())) {
+      throw Exception(
+        'This build only allows push gateways on approved hosts.',
+      );
+    }
+    return uri.replace(
+      fragment: null,
+      userInfo: '',
+      queryParameters: uri.queryParameters.isEmpty ? null : uri.queryParameters,
+    ).toString();
+  }
+
+  Future<List<String>> _loadAlsoMeUserIdsFromAccountData(Client client) async {
+    try {
+      await _awaitAccountDataLoading(
+        client,
+        timeoutMessage:
+            'Loading account data timed out while syncing bridge identities.',
+      );
+      final content = client.accountData[_alsoMeAccountDataType]?.content;
+      final ids = content?['user_ids'];
+      if (ids is! List) {
+        return const <String>[];
+      }
+      return ids
+          .whereType<String>()
+          .map((id) => id.trim())
+          .where((id) => id.isNotEmpty)
+          .toList(growable: false);
+    } catch (_) {
+      return const <String>[];
+    }
+  }
+
+  Future<void> _persistAlsoMeUserIds(List<String> userIds) async {
+    final box = await _openBox();
+    await box.put(_alsoMeUserIdsKey, userIds);
+
+    final auth = Get.find<AuthController>();
+    if (auth.state != null && auth.client.userID != null) {
+      await _persistAlsoMeUserIdsToAccountData(auth.client, userIds);
+    }
+  }
+
+  Future<void> _persistAlsoMeUserIdsToAccountData(
+    Client client,
+    List<String> userIds,
+  ) async {
+    final userId = client.userID;
+    if (userId == null) return;
+    try {
+      await client.setAccountData(userId, _alsoMeAccountDataType, {
+        'user_ids': userIds,
+      });
+    } catch (_) {
+      // Keep the local copy even if cross-device sync fails.
+    }
+  }
+
+  List<String> _mergeUniqueUserIds(List<String> first, List<String> second) {
+    final merged = <String>[];
+    for (final value in [...first, ...second]) {
+      final trimmed = value.trim();
+      if (trimmed.isEmpty || merged.contains(trimmed)) {
+        continue;
+      }
+      merged.add(trimmed);
+    }
+    return merged;
+  }
+
+  bool _sameStringLists(List<String> a, List<String> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 
   Future<List<DeviceSessionInfo>> fetchDeviceSessions() async {
@@ -830,7 +1005,11 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
       );
     }
 
-    await client.accountDataLoading;
+    await _awaitAccountDataLoading(
+      client,
+      timeoutMessage:
+          'Loading your encrypted-account data timed out. Check your network and try again.',
+    );
     if (encryption.ssss.defaultKeyId == null) {
       throw Exception(
         'This account has no Secure Backup key yet. Set up encryption in another Matrix client, then try again.',

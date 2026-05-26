@@ -46,14 +46,15 @@ Future<Uint8List?> generateVideoThumbnailBytesFromBytes(
 }) async {
   if (!supportsVideoThumbnailGeneration) return null;
 
-  final tempDir = await getTemporaryDirectory();
+  final tempRoot = await getTemporaryDirectory();
   final extension = _extensionFor(fileName, fallback: 'mp4');
-  final tempFile = File(
-    '${tempDir.path}/video_thumb_${DateTime.now().microsecondsSinceEpoch}.$extension',
-  );
+  final tempDir = await Directory(
+    '${tempRoot.path}/video_thumb_${DateTime.now().microsecondsSinceEpoch}',
+  ).create();
+  final tempFile = File('${tempDir.path}/source.$extension');
 
   try {
-    await tempFile.writeAsBytes(videoBytes, flush: true);
+    await tempFile.writeAsBytes(videoBytes, flush: false);
     return await generateVideoThumbnailBytesFromFile(
       tempFile.path,
       maxWidth: maxWidth,
@@ -64,8 +65,8 @@ Future<Uint8List?> generateVideoThumbnailBytesFromBytes(
     return null;
   } finally {
     try {
-      if (await tempFile.exists()) {
-        await tempFile.delete();
+      if (await tempDir.exists()) {
+        await tempDir.delete(recursive: true);
       }
     } catch (_) {
       // Ignore temp-file cleanup failures.

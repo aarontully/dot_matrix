@@ -174,15 +174,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   radius: 46,
                   backgroundColor: accentPanel,
                   backgroundImage: avatarUrl != null
-                      ? NetworkImage(
-                          avatarUrl,
-                          headers: {
-                            if (Get.find<AuthController>().client.accessToken !=
-                                null)
-                              'Authorization':
-                                  'Bearer ${Get.find<AuthController>().client.accessToken}',
-                          },
-                        )
+                      ? NetworkImage(avatarUrl)
                       : null,
                   child: avatarUrl == null
                       ? Text(

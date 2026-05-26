@@ -1,19 +1,20 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:audioplayers/audioplayers.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'package:dot_matrix/widgets/dot_matrix_loader.dart';
 import 'package:get/get.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:matrix/matrix.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:pasteboard/pasteboard.dart';
-import 'package:flutter/services.dart';
 import 'package:record/record.dart';
-import 'package:audioplayers/audioplayers.dart';
 
 import '../controllers/auth_controller.dart';
 import '../controllers/room_controller.dart';
@@ -73,6 +74,7 @@ class _ChatScreenState extends State<ChatScreen> {
   static const double _pickedImageMaxDimension = 2048;
   static const int _pickedImageQuality = 85;
   static const int _previewDecodeSize = 180;
+  static const String _settingsBoxName = 'dot_matrix_settings';
   static final DateFormat _dateHeaderFormat = DateFormat.yMMMMd();
 
   final _messageController = TextEditingController();
@@ -85,12 +87,14 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _isMessageFieldFocused = false;
   bool _isRecording = false;
   bool _isLoadingHistory = false;
+  bool _typingNotificationActive = false;
   final List<XFile> _pendingImages = [];
   File? _recordedAudioFile;
   AppEvent? _replyingToEvent;
   AppEvent? _editingEvent;
   final List<_ScheduledMessage> _scheduledMessages = [];
   Timer? _scheduleTimer;
+  Timer? _typingHeartbeatTimer;
   final _messageKeys = <String, GlobalKey>{};
   List<AppEvent>? _cachedTimelineSourceMessages;
   String? _cachedTimelineOwnUserId;
@@ -131,6 +135,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _scrollController.addListener(() {
       _maybeLoadMoreHistory();
     });
+    unawaited(_loadScheduledMessages());
   }
 
   /// Opening a chat should advance the read marker so the room list and
@@ -333,6 +338,10 @@ class _ChatScreenState extends State<ChatScreen> {
           ],
         ),
         actions: [
+          IconButton(
+            icon: Icon(Icons.search, color: theme.colorScheme.secondary),
+            onPressed: _showRoomSearch,
+          ),
           IconButton(
             icon: Icon(Icons.info_outline, color: theme.colorScheme.secondary),
             onPressed: () {
@@ -843,7 +852,38 @@ class _ChatScreenState extends State<ChatScreen> {
     if (isTyping != _isTyping && mounted) {
       setState(() => _isTyping = isTyping);
     }
+    _updateTypingNotification(isTyping);
     _refreshMentionSuggestions();
+  }
+
+  void _updateTypingNotification(bool isTyping) {
+    if (isTyping) {
+      _typingHeartbeatTimer?.cancel();
+      _typingHeartbeatTimer = Timer(
+        const Duration(seconds: 4),
+        () => _setTypingNotification(false),
+      );
+      unawaited(_setTypingNotification(true));
+      return;
+    }
+
+    _typingHeartbeatTimer?.cancel();
+    unawaited(_setTypingNotification(false));
+  }
+
+  Future<void> _setTypingNotification(bool isTyping) async {
+    if (_typingNotificationActive == isTyping) {
+      return;
+    }
+    final room = Get.find<AuthController>().client.getRoomById(widget.room.id);
+    if (room == null) return;
+
+    _typingNotificationActive = isTyping;
+    try {
+      await room.setTyping(isTyping, timeout: isTyping ? 5000 : null);
+    } catch (_) {
+      _typingNotificationActive = false;
+    }
   }
 
   void _clearMentionSuggestions() {
@@ -1319,14 +1359,6 @@ class _ChatScreenState extends State<ChatScreen> {
       case MessageAction.delete:
         _deleteMessage(event);
         break;
-      case MessageAction.translate:
-        Get.snackbar(
-          '',
-          'Translation not yet available',
-          snackPosition: SnackPosition.BOTTOM,
-          duration: const Duration(seconds: 2),
-        );
-        break;
       case MessageAction.react:
         final emoji = reaction ?? '❤️';
         _sendReaction(event, emoji);
@@ -1638,6 +1670,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 InkWell(
                   onTap: () {
                     setState(() => _scheduledMessages.remove(sm));
+                    unawaited(_persistScheduledMessages());
                   },
                   child: Icon(
                     Icons.close,
@@ -1697,6 +1730,7 @@ class _ChatScreenState extends State<ChatScreen> {
       _messageController.clear();
       _replyingToEvent = null;
     });
+    await _persistScheduledMessages();
 
     Get.snackbar(
       '',
@@ -1732,8 +1766,67 @@ class _ChatScreenState extends State<ChatScreen> {
       setState(
         () => _scheduledMessages.removeWhere((sm) => sm.sendAt.isBefore(now)),
       );
+      await _persistScheduledMessages();
     }
   }
+
+  Future<void> _loadScheduledMessages() async {
+    final box = await Hive.openBox(_settingsBoxName);
+    final raw = box.get(_scheduledMessageStorageKey);
+    if (raw is! List || raw.isEmpty || !mounted) {
+      return;
+    }
+
+    final sourceMessages = _currentSearchSourceMessages();
+    final loaded = raw.whereType<Map>().map((entry) {
+      final sendAtRaw = entry['send_at']?.toString();
+      final sendAt = sendAtRaw == null ? null : DateTime.tryParse(sendAtRaw);
+      if (sendAt == null) {
+        return null;
+      }
+      final replyEventId = entry['reply_to_event_id']?.toString();
+      final replyTo = replyEventId == null
+          ? null
+          : sourceMessages.firstWhereOrNull(
+              (message) => message.rawEvent.eventId == replyEventId,
+            );
+      return _ScheduledMessage(
+        text: entry['text']?.toString() ?? '',
+        sendAt: sendAt,
+        replyTo: replyTo,
+      );
+    }).whereType<_ScheduledMessage>().toList()
+      ..sort((a, b) => a.sendAt.compareTo(b.sendAt));
+
+    setState(() {
+      _scheduledMessages
+        ..clear()
+        ..addAll(loaded);
+    });
+  }
+
+  Future<void> _persistScheduledMessages() async {
+    final box = await Hive.openBox(_settingsBoxName);
+    if (_scheduledMessages.isEmpty) {
+      await box.delete(_scheduledMessageStorageKey);
+      return;
+    }
+
+    await box.put(
+      _scheduledMessageStorageKey,
+      _scheduledMessages
+          .map(
+            (message) => <String, dynamic>{
+              'text': message.text,
+              'send_at': message.sendAt.toIso8601String(),
+              'reply_to_event_id': message.replyTo?.rawEvent.eventId,
+            },
+          )
+          .toList(),
+    );
+  }
+
+  String get _scheduledMessageStorageKey => 'scheduled_messages::${widget.room.id}';
 
   Future<void> _takePhoto() async {
     if (!await requestCameraPermission(context)) return;
@@ -2158,18 +2251,23 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   bool _isSameDay(DateTime a, DateTime b) {
-    return a.year == b.year && a.month == b.month && a.day == b.day;
+    final localA = a.toLocal();
+    final localB = b.toLocal();
+    return localA.year == localB.year &&
+        localA.month == localB.month &&
+        localA.day == localB.day;
   }
 
   Widget _buildDateHeader(DateTime date, ThemeData theme) {
+    final localDate = date.toLocal();
     final now = DateTime.now();
     String text;
-    if (_isSameDay(date, now)) {
+    if (_isSameDay(localDate, now)) {
       text = 'Today';
-    } else if (_isSameDay(date, now.subtract(const Duration(days: 1)))) {
+    } else if (_isSameDay(localDate, now.subtract(const Duration(days: 1)))) {
       text = 'Yesterday';
     } else {
-      text = _dateHeaderFormat.format(date);
+      text = _dateHeaderFormat.format(localDate);
     }
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 12),
@@ -2205,12 +2303,123 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void dispose() {
     PushNotificationService().setActiveRoom(null);
+    _typingHeartbeatTimer?.cancel();
+    unawaited(_setTypingNotification(false));
     _messageController.dispose();
     _messageFocusNode.dispose();
     _scrollController.dispose();
     _audioRecorder.dispose();
     _scheduleTimer?.cancel();
     super.dispose();
+  }
+
+  List<AppEvent> _currentSearchSourceMessages() {
+    final liveRoom = _findLiveRoom();
+    final source = liveRoom?.messages ?? widget.room.messages;
+    final messages = List<AppEvent>.from(source)
+      ..sort((a, b) => b.originServerTs.compareTo(a.originServerTs));
+    return messages;
+  }
+
+  Future<void> _showRoomSearch() async {
+    final allMessages = _currentSearchSourceMessages();
+    if (allMessages.isEmpty) {
+      Get.snackbar('', 'No messages available to search yet.');
+      return;
+    }
+
+    final controller = TextEditingController();
+    var filtered = allMessages;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return SafeArea(
+              child: Padding(
+                padding: EdgeInsets.only(
+                  left: 16,
+                  right: 16,
+                  top: 8,
+                  bottom: MediaQuery.of(ctx).viewInsets.bottom + 16,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: controller,
+                      autofocus: true,
+                      decoration: const InputDecoration(
+                        hintText: 'Search this room',
+                        prefixIcon: Icon(Icons.search),
+                      ),
+                      onChanged: (value) {
+                        final query = value.trim().toLowerCase();
+                        setModalState(() {
+                          filtered = query.isEmpty
+                              ? allMessages
+                              : allMessages.where((message) {
+                                  final body = message.body.toLowerCase();
+                                  final sender =
+                                      (message.senderName ?? message.senderId)
+                                          .toLowerCase();
+                                  return body.contains(query) ||
+                                      sender.contains(query);
+                                }).toList();
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      height: MediaQuery.of(ctx).size.height * 0.6,
+                      child: filtered.isEmpty
+                          ? const Center(child: Text('No matches found'))
+                          : ListView.builder(
+                              itemCount: filtered.length,
+                              itemBuilder: (_, index) {
+                                final message = filtered[index];
+                                final sender =
+                                    message.senderName ?? message.senderId;
+                                return ListTile(
+                                  title: Text(
+                                    sender,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  subtitle: Text(
+                                    message.body,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  trailing: Text(
+                                    DateFormat.MMMd().add_jm().format(
+                                      message.originServerTs.toLocal(),
+                                    ),
+                                  ),
+                                  onTap: () {
+                                    Navigator.pop(ctx);
+                                    _scrollToEvent(
+                                      message.rawEvent.eventId,
+                                      _currentSearchSourceMessages(),
+                                    );
+                                  },
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    controller.dispose();
   }
 }
 

@@ -8,6 +8,10 @@ String matrixEventDisplayText(Event event, {Timeline? timeline}) {
       ? event
       : event.getDisplayEvent(timeline);
 
+  if (displayEvent.redactedBecause != null) {
+    return 'Message deleted';
+  }
+
   if (displayEvent.messageType == MessageTypes.BadEncrypted) {
     return displayEvent.content['can_request_session'] == true
         ? 'Waiting for room key...'
@@ -42,44 +46,33 @@ String matrixEventDisplayText(Event event, {Timeline? timeline}) {
 String _normalizeMentionText(Event event, String text) {
   if (!text.contains('@')) return text;
 
-  final replacements = <_MentionReplacement>[];
+  final replacements = <String, String>{};
   for (final user in event.room.getParticipants()) {
     final displayName = user.calcDisplayname().trim();
     if (displayName.isEmpty) continue;
 
     final visibleMention = '@$displayName';
-    replacements.add(_MentionReplacement(user.id, visibleMention));
+    replacements[user.id] = visibleMention;
     for (final fragment in user.mentionFragments) {
-      replacements.add(_MentionReplacement(fragment, visibleMention));
+      replacements.putIfAbsent(fragment, () => visibleMention);
     }
   }
 
   if (replacements.isEmpty) return text;
 
-  final uniqueReplacements = <String, _MentionReplacement>{};
-  for (final replacement in replacements) {
-    uniqueReplacements.putIfAbsent(replacement.source, () => replacement);
-  }
-
-  final orderedReplacements = uniqueReplacements.values.toList()
-    ..sort((a, b) => b.source.length.compareTo(a.source.length));
-
-  var normalized = text;
-  for (final replacement in orderedReplacements) {
-    final pattern =
-        '(^|[\\s(])${RegExp.escape(replacement.source)}'
-        '(?![^\\s).,!?:;])';
-    normalized = normalized.replaceAllMapped(
-      RegExp(pattern),
-      (match) => '${match.group(1)!}${replacement.visibleText}',
-    );
-  }
-  return normalized;
-}
-
-class _MentionReplacement {
-  const _MentionReplacement(this.source, this.visibleText);
-
-  final String source;
-  final String visibleText;
+  return text.replaceAllMapped(
+    RegExp(r'(^|[\s(])([^\s()]+)'),
+    (match) {
+      final prefix = match.group(1) ?? '';
+      final token = match.group(2) ?? '';
+      final tokenMatch = RegExp(r'^(.*?)([).,!?:;]+)?$').firstMatch(token);
+      final core = tokenMatch?.group(1) ?? token;
+      final suffix = tokenMatch?.group(2) ?? '';
+      final replacement = replacements[core];
+      if (replacement == null) {
+        return '$prefix$token';
+      }
+      return '$prefix$replacement$suffix';
+    },
+  );
 }

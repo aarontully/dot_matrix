@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -10,7 +11,9 @@ import 'package:get/get.dart';
 import 'package:matrix/matrix.dart';
 
 import '../controllers/auth_controller.dart';
+import '../controllers/room_controller.dart';
 import '../controllers/settings_controller.dart';
+import '../screens/chat_screen.dart';
 import '../utils/matrix_event_display.dart';
 
 const String _messagesChannelId = 'dot_matrix_messages';
@@ -18,6 +21,13 @@ const String _mentionsChannelId = 'dot_matrix_mentions';
 const String _androidPusherAppId = 'com.housetully.dotmatrix.android';
 const String _iosPusherAppId = 'com.housetully.dotmatrix.ios';
 const String _macosPusherAppId = 'com.housetully.dotmatrix.macos';
+const String _notificationIcon = '@drawable/ic_notification';
+const String _notificationActionMarkRead = 'mark_read';
+const String _notificationActionOpen = 'open_room';
+
+final FlutterLocalNotificationsPlugin _backgroundLocalNotifications =
+    FlutterLocalNotificationsPlugin();
+bool _backgroundNotificationsInitialized = false;
 
 String _firebaseSetupHint() {
   switch (defaultTargetPlatform) {
@@ -39,10 +49,12 @@ String _firebaseSetupHint() {
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   try {
-    await Firebase.initializeApp();
+    await Firebase.initializeApp().timeout(const Duration(seconds: 5));
   } catch (error) {
-    debugPrint('[Push] Background Firebase init failed: $error');
-    debugPrint(_firebaseSetupHint());
+    if (kDebugMode) {
+      debugPrint('[Push] Background Firebase init failed: $error');
+      debugPrint(_firebaseSetupHint());
+    }
   }
 
   final data = message.data;
@@ -60,27 +72,24 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
         : 'You have $count new messages';
   }
 
-  final localNotifications = FlutterLocalNotificationsPlugin();
-  const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
-  const darwinSettings = DarwinInitializationSettings(
-    requestAlertPermission: false,
-    requestBadgePermission: false,
-    requestSoundPermission: false,
-  );
-  await localNotifications.initialize(
-    const InitializationSettings(
-      android: androidSettings,
-      iOS: darwinSettings,
-      macOS: darwinSettings,
-    ),
-  );
+  await _ensureBackgroundNotificationsInitialized();
 
-  await localNotifications.show(
+  await _backgroundLocalNotifications.show(
     _notificationIdFromTimestamp(DateTime.now()),
     title,
     body,
     _notificationDetails(highlight: false),
     payload: jsonEncode(data),
+  );
+}
+
+@pragma('vm:entry-point')
+void _notificationTapBackground(NotificationResponse details) {
+  unawaited(
+    _enqueuePendingNotificationResponse(
+      actionId: details.actionId,
+      payload: details.payload,
+    ),
   );
 }
 
@@ -99,6 +108,7 @@ class PushNotificationService with WidgetsBindingObserver {
   String? _currentToken;
   String? _activeRoomId;
   String? _boundUserId;
+  String? _pendingOpenRoomPayload;
   AppLifecycleState _appLifecycleState = AppLifecycleState.resumed;
   final Map<String, _RoomNotificationSnapshot> _roomSnapshots = {};
 
@@ -106,23 +116,22 @@ class PushNotificationService with WidgetsBindingObserver {
     if (_initialized) return;
 
     try {
-      await Firebase.initializeApp();
+      await Firebase.initializeApp().timeout(const Duration(seconds: 5));
       _messaging = FirebaseMessaging.instance;
       FirebaseMessaging.onBackgroundMessage(
         _firebaseMessagingBackgroundHandler,
       );
       _messaging!.onTokenRefresh.listen(_onTokenRefresh);
       _currentToken = await _loadCurrentPushKey();
-      debugPrint('[Push] Push key: $_currentToken');
     } catch (error) {
-      debugPrint('[Push] Firebase not configured: $error');
-      debugPrint(_firebaseSetupHint());
+      if (kDebugMode) {
+        debugPrint('[Push] Firebase not configured: $error');
+        debugPrint(_firebaseSetupHint());
+      }
       _messaging = null;
     }
 
-    const androidSettings = AndroidInitializationSettings(
-      '@mipmap/ic_launcher',
-    );
+    const androidSettings = AndroidInitializationSettings(_notificationIcon);
     const darwinSettings = DarwinInitializationSettings(
       requestAlertPermission: false,
       requestBadgePermission: false,
@@ -135,20 +144,14 @@ class PushNotificationService with WidgetsBindingObserver {
     );
     await _localNotifications.initialize(
       initSettings,
-      onDidReceiveNotificationResponse: (details) {
-        final payload = details.payload;
-        if (payload == null || payload.isEmpty) return;
-        try {
-          final data = jsonDecode(payload) as Map<String, dynamic>;
-          debugPrint('[Push] Notification tapped: $data');
-          // TODO: Navigate to the specific chat room from payload.
-        } catch (_) {}
-      },
+      onDidReceiveNotificationResponse: _handleNotificationResponse,
+      onDidReceiveBackgroundNotificationResponse: _notificationTapBackground,
     );
 
     await _createChannels();
     WidgetsBinding.instance.addObserver(this);
     _initialized = true;
+    await _processPendingNotificationResponses();
   }
 
   Future<void> bindClient(Client client) async {
@@ -159,6 +162,8 @@ class PushNotificationService with WidgetsBindingObserver {
     _syncSubscription = client.onSync.stream.listen(
       (syncUpdate) => _handleSyncUpdate(client, syncUpdate),
     );
+    await _processPendingNotificationResponses();
+    _tryHandlePendingNavigation();
   }
 
   void unbindClient() {
@@ -171,6 +176,10 @@ class PushNotificationService with WidgetsBindingObserver {
 
   void setActiveRoom(String? roomId) {
     _activeRoomId = roomId;
+  }
+
+  void tryOpenPendingRoom() {
+    _tryHandlePendingNavigation();
   }
 
   Future<bool> requestPermission() async {
@@ -227,7 +236,6 @@ class PushNotificationService with WidgetsBindingObserver {
     if (_messaging == null) return;
     _currentToken ??= await _loadCurrentPushKey();
     if (_currentToken == null) {
-      debugPrint('[Push] No push key available');
       return;
     }
 
@@ -235,7 +243,6 @@ class PushNotificationService with WidgetsBindingObserver {
     final deviceId = client.deviceID ?? 'unknown';
     final appId = _platformPusherAppId();
     if (appId == null) {
-      debugPrint('[Push] Unsupported platform for Matrix push registration');
       return;
     }
 
@@ -251,9 +258,10 @@ class PushNotificationService with WidgetsBindingObserver {
 
     try {
       await client.postPusher(pusher, append: false);
-      debugPrint('[Push] Pusher registered');
     } catch (error) {
-      debugPrint('[Push] Failed to register pusher: $error');
+      if (kDebugMode) {
+        debugPrint('[Push] Failed to register pusher: $error');
+      }
     }
   }
 
@@ -270,9 +278,10 @@ class PushNotificationService with WidgetsBindingObserver {
 
     try {
       await client.deletePusher(pusherId);
-      debugPrint('[Push] Pusher unregistered');
     } catch (error) {
-      debugPrint('[Push] Failed to unregister pusher: $error');
+      if (kDebugMode) {
+        debugPrint('[Push] Failed to unregister pusher: $error');
+      }
     }
   }
 
@@ -322,6 +331,7 @@ class PushNotificationService with WidgetsBindingObserver {
     }
 
     _pruneSnapshots(client);
+    _tryHandlePendingNavigation();
   }
 
   bool _shouldShowSyncNotification({
@@ -329,7 +339,10 @@ class PushNotificationService with WidgetsBindingObserver {
     required _RoomNotificationSnapshot previous,
     required _RoomNotificationSnapshot current,
   }) {
-    if (_appLifecycleState != AppLifecycleState.resumed) return false;
+    if (_appLifecycleState != AppLifecycleState.resumed &&
+        _appLifecycleState != AppLifecycleState.inactive) {
+      return false;
+    }
     if (_activeRoomId == roomId) return false;
     if (!_notificationsEnabled()) return false;
 
@@ -434,7 +447,6 @@ class PushNotificationService with WidgetsBindingObserver {
 
   Future<void> _onTokenRefresh(String token) async {
     final pushKey = await _loadCurrentPushKey(refreshedFcmToken: token);
-    debugPrint('[Push] Push key refreshed: $pushKey');
     _currentToken = pushKey;
 
     final client = Get.find<AuthController>().client;
@@ -519,6 +531,132 @@ class PushNotificationService with WidgetsBindingObserver {
         return null;
     }
   }
+
+  void _handleNotificationResponse(NotificationResponse details) {
+    final payload = details.payload;
+    if (payload == null || payload.isEmpty) {
+      return;
+    }
+
+    if (details.actionId == _notificationActionMarkRead) {
+      if (!_markRoomAsReadFromPayload(payload)) {
+        unawaited(
+          _enqueuePendingNotificationResponse(
+            actionId: details.actionId,
+            payload: payload,
+          ),
+        );
+      }
+      return;
+    }
+
+    if (!_openRoomFromPayload(payload)) {
+      _pendingOpenRoomPayload = payload;
+    }
+  }
+
+  Future<void> _processPendingNotificationResponses() async {
+    final pendingResponses = await _drainPendingNotificationResponses();
+    for (final pending in pendingResponses) {
+      final payload = pending.payload;
+      if (payload == null || payload.isEmpty) {
+        continue;
+      }
+      if (pending.actionId == _notificationActionMarkRead) {
+        if (!_markRoomAsReadFromPayload(payload)) {
+          await _enqueuePendingNotificationResponse(
+            actionId: pending.actionId,
+            payload: payload,
+          );
+        }
+        continue;
+      }
+
+      if (!_openRoomFromPayload(payload)) {
+        _pendingOpenRoomPayload = payload;
+      }
+    }
+  }
+
+  bool _openRoomFromPayload(String payload) {
+    final roomId = _roomIdFromPayload(payload);
+    if (roomId == null || roomId == _activeRoomId) {
+      return roomId != null;
+    }
+    if (!Get.isRegistered<RoomController>()) {
+      return false;
+    }
+    final rooms = Get.find<RoomController>().state;
+    if (rooms == null) {
+      return false;
+    }
+    final room = rooms.firstWhereOrNull((candidate) => candidate.id == roomId);
+    if (room == null || Get.context == null) {
+      return false;
+    }
+    Get.to(() => ChatScreen(room: room), preventDuplicates: false);
+    _pendingOpenRoomPayload = null;
+    return true;
+  }
+
+  void _tryHandlePendingNavigation() {
+    final pendingPayload = _pendingOpenRoomPayload;
+    if (pendingPayload == null) return;
+    if (_openRoomFromPayload(pendingPayload)) {
+      _pendingOpenRoomPayload = null;
+    }
+  }
+
+  bool _markRoomAsReadFromPayload(String payload) {
+    final roomId = _roomIdFromPayload(payload);
+    final eventId = _eventIdFromPayload(payload);
+    if (roomId == null || eventId == null || !Get.isRegistered<AuthController>()) {
+      return false;
+    }
+
+    final client = Get.find<AuthController>().client;
+    final room = client.getRoomById(roomId);
+    if (room == null) {
+      return false;
+    }
+
+    unawaited(() async {
+      try {
+        if (room.markedUnread) {
+          await room.markUnread(false);
+        }
+        await room.setReadMarker(eventId, mRead: eventId);
+        if (Get.isRegistered<RoomController>()) {
+          await Get.find<RoomController>().refreshRooms();
+        }
+      } catch (error) {
+        if (kDebugMode) {
+          debugPrint('[Push] Failed to mark room as read: $error');
+        }
+      }
+    }());
+    return true;
+  }
+
+  String? _roomIdFromPayload(String payload) {
+    try {
+      final data = jsonDecode(payload) as Map<String, dynamic>;
+      final roomId = data['room_id']?.toString().trim();
+      return roomId == null || roomId.isEmpty ? null : roomId;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String? _eventIdFromPayload(String payload) {
+    try {
+      final data = jsonDecode(payload) as Map<String, dynamic>;
+      final eventId = data['event_id']?.toString().trim();
+      return eventId == null || eventId.isEmpty ? null : eventId;
+    } catch (_) {
+      return null;
+    }
+  }
 }
 
 class _RoomNotificationSnapshot {
@@ -539,7 +677,7 @@ class _RoomNotificationSnapshot {
 }
 
 int _notificationIdFromTimestamp(DateTime timestamp) {
-  return timestamp.microsecondsSinceEpoch.remainder(1 << 31);
+  return timestamp.microsecondsSinceEpoch.abs() % 0x7fffffff;
 }
 
 NotificationDetails _notificationDetails({required bool highlight}) {
@@ -549,11 +687,23 @@ NotificationDetails _notificationDetails({required bool highlight}) {
     channelDescription: highlight
         ? 'Mentions and highlighted activity'
         : 'Incoming chat messages',
+    icon: _notificationIcon,
     importance: Importance.high,
     priority: Priority.high,
     showWhen: true,
     enableVibration: true,
     playSound: true,
+    actions: const <AndroidNotificationAction>[
+      AndroidNotificationAction(
+        _notificationActionOpen,
+        'Open',
+        showsUserInterface: true,
+      ),
+      AndroidNotificationAction(
+        _notificationActionMarkRead,
+        'Mark as read',
+      ),
+    ],
   );
   const darwinDetails = DarwinNotificationDetails();
   return NotificationDetails(
@@ -561,4 +711,110 @@ NotificationDetails _notificationDetails({required bool highlight}) {
     iOS: darwinDetails,
     macOS: darwinDetails,
   );
+}
+
+Future<void> _ensureBackgroundNotificationsInitialized() async {
+  if (_backgroundNotificationsInitialized) return;
+
+  const androidSettings = AndroidInitializationSettings(_notificationIcon);
+  const darwinSettings = DarwinInitializationSettings(
+    requestAlertPermission: false,
+    requestBadgePermission: false,
+    requestSoundPermission: false,
+  );
+  await _backgroundLocalNotifications.initialize(
+    const InitializationSettings(
+      android: androidSettings,
+      iOS: darwinSettings,
+      macOS: darwinSettings,
+    ),
+  );
+
+  const messagesChannel = AndroidNotificationChannel(
+    _messagesChannelId,
+    'Messages',
+    description: 'Incoming chat messages',
+    importance: Importance.high,
+  );
+  const mentionsChannel = AndroidNotificationChannel(
+    _mentionsChannelId,
+    'Mentions',
+    description: 'Mentions and highlighted activity',
+    importance: Importance.high,
+  );
+  final android = _backgroundLocalNotifications
+      .resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin
+      >();
+  await android?.createNotificationChannel(messagesChannel);
+  await android?.createNotificationChannel(mentionsChannel);
+  _backgroundNotificationsInitialized = true;
+}
+
+Future<File> _pendingNotificationQueueFile() async {
+  return File(
+    '${Directory.systemTemp.path}/dot_matrix_notification_responses.json',
+  );
+}
+
+Future<void> _enqueuePendingNotificationResponse({
+  required String? actionId,
+  required String? payload,
+}) async {
+  if (payload == null || payload.isEmpty) {
+    return;
+  }
+
+  final file = await _pendingNotificationQueueFile();
+  final pending = await _drainPendingNotificationResponses();
+  pending.add(_QueuedNotificationResponse(actionId: actionId, payload: payload));
+  await file.writeAsString(
+    jsonEncode(pending.map((entry) => entry.toJson()).toList()),
+    flush: true,
+  );
+}
+
+Future<List<_QueuedNotificationResponse>> _drainPendingNotificationResponses() async {
+  final file = await _pendingNotificationQueueFile();
+  if (!await file.exists()) {
+    return <_QueuedNotificationResponse>[];
+  }
+
+  try {
+    final raw = await file.readAsString();
+    await file.delete();
+    final decoded = jsonDecode(raw);
+    if (decoded is! List) {
+      return <_QueuedNotificationResponse>[];
+    }
+    return decoded
+        .whereType<Map>()
+        .map(
+          (entry) => _QueuedNotificationResponse(
+            actionId: entry['action_id']?.toString(),
+            payload: entry['payload']?.toString(),
+          ),
+        )
+        .toList();
+  } catch (_) {
+    try {
+      await file.delete();
+    } catch (_) {}
+    return <_QueuedNotificationResponse>[];
+  }
+}
+
+class _QueuedNotificationResponse {
+  const _QueuedNotificationResponse({
+    required this.actionId,
+    required this.payload,
+  });
+
+  final String? actionId;
+  final String? payload;
+
+  Map<String, dynamic> toJson() => {
+    'action_id': actionId,
+    'payload': payload,
+  };
 }

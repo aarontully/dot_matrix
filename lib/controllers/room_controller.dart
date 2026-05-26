@@ -90,7 +90,10 @@ class RoomController extends GetxController with StateMixin<List<AppRoom>> {
     }
 
     final client = auth.client;
-    await client.roomsLoading;
+    await (client.roomsLoading ?? Future.value()).timeout(
+      const Duration(seconds: 20),
+      onTimeout: () => Future.value(),
+    );
     for (final room in client.rooms.where(
       (room) => room.membership == Membership.join,
     )) {
@@ -139,8 +142,10 @@ class RoomController extends GetxController with StateMixin<List<AppRoom>> {
 
     var parts = content.split(',').map((p) => p.trim()).toList();
 
-    // Remove any user whose name contains 'bot' (case-insensitive)
-    parts.removeWhere((part) => part.toLowerCase().contains('bot'));
+    // Only strip obvious standalone bot labels, not names like "Robot".
+    parts.removeWhere(
+      (part) => RegExp(r'\bbot\b', caseSensitive: false).hasMatch(part),
+    );
 
     var cleaned = parts.join(', ').trim();
 
@@ -226,32 +231,12 @@ class RoomController extends GetxController with StateMixin<List<AppRoom>> {
 
   Event? _resolveBetterBridgeMediaEvent(
     Event event,
-    Timeline timeline,
-    List<Event> allTimelineEvents,
+    Map<String, Event> bestBridgeMediaEvents,
   ) {
     if (!_isProvisionalGMessagesMedia(event)) return null;
     final key = _attachmentLogicalKey(event);
     if (key == null) return null;
-
-    Event? best;
-    for (final candidate in allTimelineEvents) {
-      if (candidate.senderId != event.senderId) continue;
-      final displayCandidate = candidate.getDisplayEvent(timeline);
-      if (!_hasRenderableMedia(displayCandidate)) continue;
-
-      final candidateKeys = <String?>{
-        _attachmentLogicalKey(candidate),
-        _attachmentLogicalKey(displayCandidate),
-      };
-      if (!candidateKeys.contains(key)) continue;
-
-      if (best == null ||
-          displayCandidate.originServerTs.isAfter(best.originServerTs)) {
-        best = displayCandidate;
-      }
-    }
-
-    return best;
+    return bestBridgeMediaEvents['${event.senderId}::$key'];
   }
 
   List<AppEvent> _collapseBridgeMediaPlaceholders(List<AppEvent> events) {
@@ -289,6 +274,30 @@ class RoomController extends GetxController with StateMixin<List<AppRoom>> {
     }).toList();
   }
 
+  Map<String, Event> _indexBestBridgeMediaEvents(
+    List<Event> allTimelineEvents,
+    Timeline timeline,
+  ) {
+    final bestEvents = <String, Event>{};
+    for (final candidate in allTimelineEvents) {
+      final displayCandidate = candidate.getDisplayEvent(timeline);
+      if (!_hasRenderableMedia(displayCandidate)) continue;
+
+      final key =
+          _attachmentLogicalKey(candidate) ??
+          _attachmentLogicalKey(displayCandidate);
+      if (key == null) continue;
+
+      final compoundKey = '${candidate.senderId}::$key';
+      final existing = bestEvents[compoundKey];
+      if (existing == null ||
+          displayCandidate.originServerTs.isAfter(existing.originServerTs)) {
+        bestEvents[compoundKey] = displayCandidate;
+      }
+    }
+    return bestEvents;
+  }
+
   Future<void> _loadRoomsInternal() async {
     _isLoadingRooms = true;
     _needsReload = false;
@@ -314,7 +323,10 @@ class RoomController extends GetxController with StateMixin<List<AppRoom>> {
 
     try {
       final client = auth.client;
-      await client.roomsLoading;
+      await (client.roomsLoading ?? Future.value()).timeout(
+        const Duration(seconds: 20),
+        onTimeout: () => Future.value(),
+      );
 
       // Build a map of child room ID -> parent space IDs from all space rooms.
       // This is more reliable than reading m.space.parent from each room,
@@ -339,6 +351,10 @@ class RoomController extends GetxController with StateMixin<List<AppRoom>> {
           .map((room) async {
             final timeline = await _timelineFor(room);
             final allTimelineEvents = List<Event>.from(timeline.events);
+            final bestBridgeMediaEvents = _indexBestBridgeMediaEvents(
+              allTimelineEvents,
+              timeline,
+            );
             if (client.encryptionEnabled) {
               timeline.requestKeys(
                 tryOnlineBackup: true,
@@ -382,8 +398,7 @@ class RoomController extends GetxController with StateMixin<List<AppRoom>> {
                     final displayEvent =
                         _resolveBetterBridgeMediaEvent(
                           e,
-                          timeline,
-                          allTimelineEvents,
+                          bestBridgeMediaEvents,
                         ) ??
                         e.getDisplayEvent(timeline);
                     return AppEvent(
@@ -429,7 +444,10 @@ class RoomController extends GetxController with StateMixin<List<AppRoom>> {
                   displayName: m.displayName,
                 );
               }).toList();
-              memberCount = realMembers.length + 1; // +1 for current user
+              final includesCurrentUser = members.any(
+                (member) => member.id == client.userID,
+              );
+              memberCount = realMembers.length + (includesCurrentUser ? 1 : 0);
               final memberIds = realMembers.map((m) => m.id).toList();
               bridgePlatform = BridgeDetector.detectFromMembers(
                 memberIds,

@@ -8,17 +8,17 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:gal/gal.dart';
 import 'package:video_player/video_player.dart';
 
+import '../utils/pinned_http_client.dart';
+
 class VideoPlayerScreen extends StatefulWidget {
   final Uint8List? encryptedBytes;
   final String? videoUrl;
-  final Map<String, String>? httpHeaders;
   final String? mimetype;
 
   const VideoPlayerScreen({
     super.key,
     this.encryptedBytes,
     this.videoUrl,
-    this.httpHeaders,
     this.mimetype,
   });
 
@@ -27,10 +27,13 @@ class VideoPlayerScreen extends StatefulWidget {
 }
 
 class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
+  static const MethodChannel _videoChannel = MethodChannel('dot_matrix/video');
+
   VideoPlayerController? _controller;
   bool _isLoading = true;
   bool _hasError = false;
   String? _videoPath;
+  double _playbackSpeed = 1.0;
 
   @override
   void initState() {
@@ -50,9 +53,13 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
         await tempFile.writeAsBytes(widget.encryptedBytes!);
       } else if (widget.videoUrl != null) {
         tempFile = File('${tempDir.path}/video_$ts$ext');
-        final req = await HttpClient().getUrl(Uri.parse(widget.videoUrl!));
-        widget.httpHeaders?.forEach(req.headers.set);
+        final videoUri = Uri.parse(widget.videoUrl!);
+        final req = await createPinnedIoHttpClient().getUrl(videoUri);
         final res = await req.close();
+        final effectiveUri = res.redirects.isNotEmpty
+            ? res.redirects.last.location
+            : videoUri;
+        await validatePinnedTlsCertificate(effectiveUri, res.certificate);
         await res.pipe(tempFile.openWrite());
       } else {
         throw Exception('No video source provided');
@@ -151,6 +158,56 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     });
   }
 
+  Future<void> _setPlaybackSpeed(double speed) async {
+    final controller = _controller;
+    if (controller == null) return;
+    await controller.setPlaybackSpeed(speed);
+    if (mounted) {
+      setState(() => _playbackSpeed = speed);
+    }
+  }
+
+  Future<void> _seekRelative(Duration offset) async {
+    final controller = _controller;
+    if (controller == null) return;
+    final current = controller.value.position;
+    final duration = controller.value.duration;
+    var target = current + offset;
+    if (target < Duration.zero) {
+      target = Duration.zero;
+    } else if (target > duration) {
+      target = duration;
+    }
+    await controller.seekTo(target);
+  }
+
+  Future<void> _enterPictureInPicture(BuildContext context) async {
+    if (!Platform.isAndroid || _controller == null) {
+      return;
+    }
+    final size = _controller!.value.size;
+    try {
+      final entered = await _videoChannel.invokeMethod<bool>(
+        'enterPictureInPicture',
+        <String, int>{
+          'aspectRatioX': size.width.round().clamp(1, 10000),
+          'aspectRatioY': size.height.round().clamp(1, 10000),
+        },
+      );
+      if (entered != true && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Picture-in-picture is unavailable')),
+        );
+      }
+    } catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Picture-in-picture failed: $error')),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -165,6 +222,35 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
           onPressed: () => Navigator.of(context).pop(),
         ),
         actions: [
+          PopupMenuButton<double>(
+            tooltip: 'Playback speed',
+            initialValue: _playbackSpeed,
+            onSelected: _setPlaybackSpeed,
+            itemBuilder: (_) => const [
+              PopupMenuItem(value: 0.75, child: Text('0.75x')),
+              PopupMenuItem(value: 1.0, child: Text('1.0x')),
+              PopupMenuItem(value: 1.25, child: Text('1.25x')),
+              PopupMenuItem(value: 1.5, child: Text('1.5x')),
+              PopupMenuItem(value: 2.0, child: Text('2.0x')),
+            ],
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Center(
+                child: Text(
+                  '${_playbackSpeed.toStringAsFixed(_playbackSpeed == 1 ? 0 : 2).replaceAll(RegExp(r'\\.00$'), '')}x',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          if (Platform.isAndroid)
+            IconButton(
+              icon: const Icon(Icons.picture_in_picture_alt_outlined),
+              onPressed: _controller == null ? null : () => _enterPictureInPicture(context),
+            ),
           if (_videoPath != null)
             IconButton(
               icon: const Icon(Icons.download, color: Colors.white),
@@ -228,13 +314,46 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
               bottom: 0,
               left: 0,
               right: 0,
-              child: VideoProgressIndicator(
-                _controller!,
-                allowScrubbing: true,
-                colors: const VideoProgressColors(
-                  playedColor: Colors.white,
-                  bufferedColor: Colors.white54,
-                  backgroundColor: Colors.white24,
+              child: Container(
+                color: Colors.black54,
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    VideoProgressIndicator(
+                      _controller!,
+                      allowScrubbing: true,
+                      colors: const VideoProgressColors(
+                        playedColor: Colors.white,
+                        bufferedColor: Colors.white54,
+                        backgroundColor: Colors.white24,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        IconButton(
+                          onPressed: () => _seekRelative(const Duration(seconds: -10)),
+                          icon: const Icon(Icons.replay_10, color: Colors.white),
+                        ),
+                        IconButton(
+                          onPressed: _togglePlay,
+                          icon: Icon(
+                            _controller!.value.isPlaying
+                                ? Icons.pause_circle_outline
+                                : Icons.play_circle_outline,
+                            color: Colors.white,
+                            size: 34,
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: () => _seekRelative(const Duration(seconds: 10)),
+                          icon: const Icon(Icons.forward_10, color: Colors.white),
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
               ),
             ),

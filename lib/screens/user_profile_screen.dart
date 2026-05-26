@@ -77,7 +77,6 @@ class UserProfileScreen extends StatelessWidget {
                         rawAvatarUrl: user.avatarUrl,
                         displayName: displayName,
                         colorScheme: cs,
-                        accessToken: client.accessToken,
                       ),
                       const SizedBox(height: 18),
                       Text(
@@ -216,14 +215,12 @@ class _ProfileAvatar extends StatelessWidget {
     required this.rawAvatarUrl,
     required this.displayName,
     required this.colorScheme,
-    required this.accessToken,
   });
 
   final String? avatarUrl;
   final Uri? rawAvatarUrl;
   final String displayName;
   final ColorScheme colorScheme;
-  final String? accessToken;
 
   @override
   Widget build(BuildContext context) {
@@ -246,9 +243,6 @@ class _ProfileAvatar extends StatelessWidget {
 
     return CachedNetworkImage(
       imageUrl: avatarUrl!,
-      httpHeaders: {
-        if (accessToken != null) 'Authorization': 'Bearer $accessToken',
-      },
       imageBuilder: (context, imageProvider) =>
           CircleAvatar(radius: 44, backgroundImage: imageProvider),
       placeholder: (_, __) => CircleAvatar(

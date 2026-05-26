@@ -73,3 +73,34 @@ Uri upgradeMatrixMediaV3UrlToClientV1(Uri url) {
   }
   return url;
 }
+
+/// Uses Matrix's token query authentication for media endpoints so redirects do
+/// not forward a bearer Authorization header to third-party CDNs.
+Uri authenticatedMatrixMediaUri(Uri uri, Client client) {
+  final accessToken = client.accessToken;
+  if (accessToken == null || accessToken.isEmpty) {
+    return uri;
+  }
+
+  final isMatrixMediaPath =
+      uri.path.startsWith('/_matrix/client/v1/media/') ||
+      uri.path.startsWith('/_matrix/media/v3/');
+  final sameHost =
+      client.homeserver != null &&
+      uri.host == client.homeserver!.host &&
+      uri.scheme == client.homeserver!.scheme;
+  if (!isMatrixMediaPath || !sameHost) {
+    return uri;
+  }
+
+  if (uri.queryParameters['access_token'] == accessToken) {
+    return uri;
+  }
+
+  return uri.replace(
+    queryParameters: {
+      ...uri.queryParameters,
+      'access_token': accessToken,
+    },
+  );
+}

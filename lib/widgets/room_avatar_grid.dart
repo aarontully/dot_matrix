@@ -44,10 +44,6 @@ class RoomAvatarGrid extends StatelessWidget {
           child: ClipOval(
             child: CachedNetworkImage(
               imageUrl: resolved,
-              httpHeaders: {
-                if (client.accessToken != null)
-                  'Authorization': 'Bearer ${client.accessToken}',
-              },
               width: size,
               height: size,
               fit: BoxFit.cover,
@@ -75,10 +71,6 @@ class RoomAvatarGrid extends StatelessWidget {
             child: ClipOval(
               child: CachedNetworkImage(
                 imageUrl: resolved,
-                httpHeaders: {
-                  if (client.accessToken != null)
-                    'Authorization': 'Bearer ${client.accessToken}',
-                },
                 width: size,
                 height: size,
                 fit: BoxFit.cover,
@@ -236,10 +228,6 @@ class _MemberAvatarGrid extends StatelessWidget {
       height: cellSize,
       child: CachedNetworkImage(
         imageUrl: resolved,
-        httpHeaders: {
-          if (client.accessToken != null)
-            'Authorization': 'Bearer ${client.accessToken}',
-        },
         fit: BoxFit.cover,
         errorWidget: (_, __, ___) {
           markAvatarSourceBroken(list[index]);

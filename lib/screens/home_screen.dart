@@ -12,6 +12,7 @@ import '../controllers/auth_controller.dart';
 import '../controllers/room_controller.dart';
 import '../controllers/settings_controller.dart';
 import '../theme/app_theme.dart';
+import '../services/push_notification_service.dart';
 import '../utils/avatar_url_resolver.dart';
 import '../utils/bridge_detector.dart';
 import '../utils/matrix_event_display.dart';
@@ -26,6 +27,7 @@ import 'device_setup_screen.dart';
 import 'developer_access_screen.dart';
 import 'encryption_settings_screen.dart';
 import 'sessions_screen.dart';
+import 'space_management_screen.dart';
 
 enum _HomeTab { chats, activity, menu }
 
@@ -50,6 +52,14 @@ class _HomeScreenState extends State<HomeScreen> {
   int _selectedIndex = 0;
   String _searchQuery = '';
   int _menuRefreshToken = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      PushNotificationService().tryOpenPendingRoom();
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -127,6 +137,22 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           const Spacer(),
           if (tab == _HomeTab.chats) ...[
+            IconButton(
+              icon: Icon(
+                Icons.hub_outlined,
+                color:
+                    Theme.of(context).appBarTheme.foregroundColor ??
+                    Theme.of(context).colorScheme.onSurface,
+              ),
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const SpaceManagementScreen(),
+                  ),
+                );
+              },
+            ),
             IconButton(
               icon: Icon(
                 Icons.filter_list_outlined,
@@ -446,11 +472,6 @@ class _HomeScreenState extends State<HomeScreen> {
                             child: ClipOval(
                               child: CachedNetworkImage(
                                 imageUrl: avatarImageUrl,
-                                httpHeaders: {
-                                  if (client.accessToken != null)
-                                    'Authorization':
-                                        'Bearer ${client.accessToken}',
-                                },
                                 width: 56,
                                 height: 56,
                                 fit: BoxFit.cover,
@@ -1263,14 +1284,15 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   String _formatTimestamp(DateTime timestamp) {
+    final localTimestamp = timestamp.toLocal();
     final now = DateTime.now();
-    if (DateUtils.isSameDay(timestamp, now)) {
-      return DateFormat.jm().format(timestamp);
+    if (DateUtils.isSameDay(localTimestamp, now)) {
+      return DateFormat.jm().format(localTimestamp);
     }
-    if (now.difference(timestamp).inDays < 7) {
-      return DateFormat.E().format(timestamp);
+    if (now.difference(localTimestamp).inDays < 7) {
+      return DateFormat.E().format(localTimestamp);
     }
-    return DateFormat.MMMd().format(timestamp);
+    return DateFormat.MMMd().format(localTimestamp);
   }
 
   String _localpart(String userId) {

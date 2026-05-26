@@ -17,6 +17,7 @@ class ComposeScreen extends StatefulWidget {
 }
 
 class _ComposeScreenState extends State<ComposeScreen> {
+  static final RegExp _matrixUserIdPattern = RegExp(r'^@[^:\s]+:[^:\s]+$');
   final _userIdController = TextEditingController();
   bool _isCreatingRoom = false;
 
@@ -90,7 +91,9 @@ class _ComposeScreenState extends State<ComposeScreen> {
                         hintText: '@username:homeserver.org',
                         prefixIcon: Icon(Icons.alternate_email),
                       ),
-                      textCapitalization: TextCapitalization.sentences,
+                      textCapitalization: TextCapitalization.none,
+                      autocorrect: false,
+                      enableSuggestions: false,
                       textInputAction: TextInputAction.done,
                       onSubmitted: (_) => _startChat(),
                     ),
@@ -129,6 +132,10 @@ class _ComposeScreenState extends State<ComposeScreen> {
     final userId = _userIdController.text.trim();
     if (userId.isEmpty) {
       Get.snackbar('Error', 'Please enter a User ID');
+      return;
+    }
+    if (!_matrixUserIdPattern.hasMatch(userId)) {
+      Get.snackbar('Error', 'Enter a full Matrix ID like @name:server.tld');
       return;
     }
 

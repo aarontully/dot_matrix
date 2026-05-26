@@ -17,27 +17,49 @@ void main() async {
   await Hive.initFlutter();
   await PushNotificationService().initialize();
 
-  final box = await Hive.openBox('dot_matrix_settings');
-  final customColorValue = box.get('custom_primary_color') as int?;
-  final initialSeedColor = customColorValue != null
-      ? Color(customColorValue)
-      : null;
+  Color? initialSeedColor;
+  String? startupError;
+  try {
+    final box = await Hive.openBox('dot_matrix_settings');
+    final customColorValue = box.get('custom_primary_color') as int?;
+    initialSeedColor = customColorValue != null
+        ? Color(customColorValue)
+        : null;
+  } catch (error) {
+    startupError =
+        'Dot Matrix could not open local app storage. Check file permissions or reset the local app data, then try again.\n\n$error';
+  }
 
   // Initialize Controllers
-  Get.put(AuthController());
-  Get.put(SettingsController());
-  Get.put(RoomController());
+  if (startupError == null) {
+    Get.put(AuthController());
+    Get.put(SettingsController());
+    Get.put(RoomController());
+  }
 
-  runApp(MainApp(initialSeedColor: initialSeedColor));
+  runApp(
+    MainApp(initialSeedColor: initialSeedColor, startupError: startupError),
+  );
 }
 
 class MainApp extends StatelessWidget {
-  const MainApp({super.key, this.initialSeedColor});
+  const MainApp({super.key, this.initialSeedColor, this.startupError});
 
   final Color? initialSeedColor;
+  final String? startupError;
 
   @override
   Widget build(BuildContext context) {
+    if (startupError != null) {
+      return GetMaterialApp(
+        debugShowCheckedModeBanner: false,
+        title: 'Dot Matrix Messenger',
+        theme: AppTheme.lightTheme(seedColor: initialSeedColor),
+        darkTheme: AppTheme.darkTheme(seedColor: initialSeedColor),
+        home: _StartupErrorScreen(error: startupError!),
+      );
+    }
+
     return GetBuilder<SettingsController>(
       builder: (settingsController) {
         final settingsState = settingsController.state;
@@ -74,6 +96,50 @@ class _AuthLoadingScreen extends StatelessWidget {
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
       body: const SafeArea(child: Center(child: DotMatrixLoader())),
+    );
+  }
+}
+
+class _StartupErrorScreen extends StatelessWidget {
+  const _StartupErrorScreen({required this.error});
+
+  final String error;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Scaffold(
+      backgroundColor: theme.scaffoldBackgroundColor,
+      body: SafeArea(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.error_outline,
+                  size: 42,
+                  color: theme.colorScheme.error,
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'Startup failed',
+                  style: theme.textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  error,
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodyMedium,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

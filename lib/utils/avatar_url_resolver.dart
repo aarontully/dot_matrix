@@ -19,13 +19,18 @@ String? resolveAvatarImageUrl(
   }
 
   final resolvedUri = avatarUri.isScheme('mxc')
-      ? withMatrixMediaAllowRedirect(mxcToClientV1MediaThumbnail(
-          avatarUri,
+      ? authenticatedMatrixMediaUri(
+          withMatrixMediaAllowRedirect(
+            mxcToClientV1MediaThumbnail(
+              avatarUri,
+              client,
+              width: size,
+              height: size,
+              method: ThumbnailMethod.crop,
+            ),
+          ),
           client,
-          width: size,
-          height: size,
-          method: ThumbnailMethod.crop,
-        ))
+        )
       : avatarUri;
   final resolvedValue = resolvedUri.toString();
   return resolvedValue.isEmpty ? null : resolvedValue;

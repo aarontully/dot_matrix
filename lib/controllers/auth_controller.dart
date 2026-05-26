@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:get/get.dart';
@@ -8,6 +10,7 @@ import 'package:matrix/matrix.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../services/push_notification_service.dart';
+import '../utils/pinned_http_client.dart';
 import '../utils/avatar_url_resolver.dart';
 import '../utils/current_session_trust.dart';
 import '../screens/device_setup_screen.dart';
@@ -24,7 +27,7 @@ class AuthController extends GetxController with StateMixin<String?> {
   static const _defaultDeviceName = 'DotMatrix';
 
   final FlutterSecureStorage _storage = const FlutterSecureStorage(
-    mOptions: MacOsOptions(useDataProtectionKeyChain: false),
+    mOptions: MacOsOptions(useDataProtectionKeyChain: true),
   );
   Client _client = Client('Dot Matrix');
   StreamSubscription? _verificationSubscription;
@@ -49,6 +52,7 @@ class AuthController extends GetxController with StateMixin<String?> {
     final newClient = Client(
       'Dot Matrix',
       databaseBuilder: (_) async => _openMatrixDatabase(),
+      httpClient: createPinnedHttpClient(),
       verificationMethods: {KeyVerificationMethod.emoji},
     );
 
@@ -84,6 +88,18 @@ class AuthController extends GetxController with StateMixin<String?> {
         message.contains('M_MISSING_TOKEN');
   }
 
+  bool _isConnectivityError(Object error) {
+    return error is SocketException ||
+        error is TimeoutException ||
+        error is HttpException;
+  }
+
+  void _debugLog(String message) {
+    if (kDebugMode) {
+      debugPrint('[AuthController] $message');
+    }
+  }
+
   Future<bool> _validateStoredSession({
     required Uri homeserver,
     required String accessToken,
@@ -109,11 +125,8 @@ class AuthController extends GetxController with StateMixin<String?> {
   Future<void> _init() async {
     change(null, status: RxStatus.loading());
     try {
-      debugPrint('[AuthController] Starting _init, reading secure storage...');
+      _debugLog('Restoring stored session...');
       final storedValues = await _storage.readAll();
-      debugPrint(
-        '[AuthController] Secure storage readAll completed. Keys: ${storedValues.keys.toList()}',
-      );
       final accessToken = storedValues[_storageTokenKey];
       final userId = storedValues[_storageUserIdKey];
       final homeserver = storedValues[_storageHomeserverKey];
@@ -121,17 +134,10 @@ class AuthController extends GetxController with StateMixin<String?> {
       final deviceName =
           storedValues[_storageDeviceNameKey] ?? _defaultDeviceName;
 
-      debugPrint(
-        '[AuthController] token=${accessToken != null}, userId=${userId != null}, homeserver=${homeserver != null}, deviceId=${deviceId != null}',
-      );
-
       if (accessToken == null ||
           userId == null ||
           homeserver == null ||
           deviceId == null) {
-        debugPrint(
-          '[AuthController] Missing stored session fields, showing login.',
-        );
         change(null, status: RxStatus.success());
         return;
       }
@@ -140,15 +146,12 @@ class AuthController extends GetxController with StateMixin<String?> {
       final hasLocalMatrixSession = await _hasLocalMatrixSession();
 
       if (!hasLocalMatrixSession) {
-        debugPrint(
-          '[AuthController] Local Matrix DB missing but credentials exist. Resetting session.',
-        );
+        _debugLog('Local Matrix database missing, resetting stored session.');
         await _resetStoredSession();
         change(null, status: RxStatus.success());
         return;
       }
 
-      debugPrint('[AuthController] Validating stored session...');
       try {
         final isStoredSessionValid = await _validateStoredSession(
           homeserver: homeserverUri,
@@ -167,31 +170,42 @@ class AuthController extends GetxController with StateMixin<String?> {
           change(null, status: RxStatus.success());
           return;
         }
+        if (_isConnectivityError(error)) {
+          change(
+            null,
+            status: RxStatus.error(
+              'Could not validate your saved session because the network is unavailable. Reconnect and try again.',
+            ),
+          );
+          return;
+        }
+        rethrow;
       }
 
-      debugPrint('[AuthController] Creating Matrix client...');
       _client = await _createClient();
-      debugPrint('[AuthController] Initializing Matrix client...');
       await _client.init(
-        newToken: hasLocalMatrixSession ? null : accessToken,
-        newHomeserver: hasLocalMatrixSession ? null : homeserverUri,
-        newUserID: hasLocalMatrixSession ? null : userId,
-        newDeviceID: hasLocalMatrixSession ? null : deviceId,
-        newDeviceName: hasLocalMatrixSession ? null : deviceName,
+        newToken: accessToken,
+        newHomeserver: homeserverUri,
+        newUserID: userId,
+        newDeviceID: deviceId,
+        newDeviceName: deviceName,
         waitForFirstSync: false,
         waitUntilLoadCompletedLoaded: false,
       );
-      debugPrint('[AuthController] Matrix client init completed.');
-      await (_client.roomsLoading ?? Future.value());
-      debugPrint('[AuthController] Rooms loading completed.');
+      await (_client.roomsLoading ?? Future.value()).timeout(
+        const Duration(seconds: 20),
+        onTimeout: () => Future.value(),
+      );
       _setupVerificationListener();
       await PushNotificationService().bindClient(_client);
       await _maybeRegisterPusher();
       change(userId, status: RxStatus.success());
       await _maybePromptDeviceVerification();
     } catch (error, stackTrace) {
-      debugPrint('[AuthController] _init error: $error');
-      debugPrint('[AuthController] _init stackTrace: $stackTrace');
+      _debugLog('_init failed: $error');
+      if (kDebugMode) {
+        debugPrint('$stackTrace');
+      }
       if (_isInvalidTokenError(error)) {
         await _resetStoredSession();
         change(null, status: RxStatus.success());
@@ -200,7 +214,6 @@ class AuthController extends GetxController with StateMixin<String?> {
 
       _client = await _createClient();
       change(null, status: RxStatus.error(error.toString()));
-      change(null, status: RxStatus.success());
     }
   }
 
@@ -232,7 +245,6 @@ class AuthController extends GetxController with StateMixin<String?> {
         waitUntilLoadCompletedLoaded: false,
       );
 
-      debugPrint('[AuthController] Login successful, persisting session...');
       await _persistSession(
         accessToken: loginResponse.accessToken,
         userId: loginResponse.userId,
@@ -240,7 +252,6 @@ class AuthController extends GetxController with StateMixin<String?> {
         deviceId: loginResponse.deviceId,
         deviceName: _defaultDeviceName,
       );
-      debugPrint('[AuthController] Session persisted.');
 
       clearBrokenAvatarSources();
       _setupVerificationListener();
@@ -269,12 +280,12 @@ class AuthController extends GetxController with StateMixin<String?> {
 
   Future<void> persistDeviceName(String deviceName) async {
     try {
-      debugPrint('[AuthController] persistDeviceName: writing deviceName...');
       await _storage.write(key: _storageDeviceNameKey, value: deviceName);
-      debugPrint('[AuthController] persistDeviceName: success');
     } catch (e, st) {
-      debugPrint('[AuthController] persistDeviceName error: $e');
-      debugPrint('[AuthController] persistDeviceName stackTrace: $st');
+      _debugLog('persistDeviceName failed: $e');
+      if (kDebugMode) {
+        debugPrint('$st');
+      }
       rethrow;
     }
   }
@@ -290,12 +301,12 @@ class AuthController extends GetxController with StateMixin<String?> {
     await PushNotificationService().unregisterPusher();
     PushNotificationService().unbindClient();
     try {
-      debugPrint('[AuthController] Clearing stored session...');
       await _clearStoredSession();
-      debugPrint('[AuthController] Stored session cleared.');
     } catch (e, st) {
-      debugPrint('[AuthController] logout clear session error: $e');
-      debugPrint('[AuthController] logout clear session stackTrace: $st');
+      _debugLog('logout cleanup failed: $e');
+      if (kDebugMode) {
+        debugPrint('$st');
+      }
     }
     clearBrokenAvatarSources();
     _verificationSubscription?.cancel();
@@ -488,36 +499,32 @@ class AuthController extends GetxController with StateMixin<String?> {
     required String deviceName,
   }) async {
     try {
-      debugPrint('[AuthController] _persistSession: writing token...');
       await _storage.write(key: _storageTokenKey, value: accessToken);
-      debugPrint('[AuthController] _persistSession: writing userId...');
       await _storage.write(key: _storageUserIdKey, value: userId);
-      debugPrint('[AuthController] _persistSession: writing homeserver...');
       await _storage.write(key: _storageHomeserverKey, value: homeserver);
-      debugPrint('[AuthController] _persistSession: writing deviceId...');
       await _storage.write(key: _storageDeviceIdKey, value: deviceId);
-      debugPrint('[AuthController] _persistSession: writing deviceName...');
       await _storage.write(key: _storageDeviceNameKey, value: deviceName);
-      debugPrint('[AuthController] _persistSession: all writes completed');
     } catch (e, st) {
-      debugPrint('[AuthController] _persistSession error: $e');
-      debugPrint('[AuthController] _persistSession stackTrace: $st');
+      _debugLog('persisting session failed: $e');
+      if (kDebugMode) {
+        debugPrint('$st');
+      }
       rethrow;
     }
   }
 
   Future<void> _clearStoredSession() async {
     try {
-      debugPrint('[AuthController] _clearStoredSession: deleting keys...');
       await _storage.delete(key: _storageTokenKey);
       await _storage.delete(key: _storageUserIdKey);
       await _storage.delete(key: _storageHomeserverKey);
       await _storage.delete(key: _storageDeviceIdKey);
       await _storage.delete(key: _storageDeviceNameKey);
-      debugPrint('[AuthController] _clearStoredSession: done');
     } catch (e, st) {
-      debugPrint('[AuthController] _clearStoredSession error: $e');
-      debugPrint('[AuthController] _clearStoredSession stackTrace: $st');
+      _debugLog('clearing stored session failed: $e');
+      if (kDebugMode) {
+        debugPrint('$st');
+      }
       rethrow;
     }
   }

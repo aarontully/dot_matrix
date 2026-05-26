@@ -22,6 +22,7 @@ import '../models/room_model.dart';
 import '../theme/app_theme.dart';
 import '../utils/avatar_url_resolver.dart';
 import '../utils/matrix_media_uri.dart';
+import '../utils/pinned_http_client.dart';
 import '../screens/video_player_screen.dart';
 
 enum MessageAction {
@@ -31,7 +32,6 @@ enum MessageAction {
   more,
   react,
   delete,
-  translate,
   edit,
 }
 
@@ -217,7 +217,7 @@ class MessageBubble extends StatelessWidget {
             if (replyRef != null) ...[replyRef, const SizedBox(height: 8)],
             _isRedacted
                 ? Text(
-                    event.body,
+                    'Message deleted',
                     style: TextStyle(
                       color: bubbleFill.textColor,
                       fontSize: 15,
@@ -278,14 +278,9 @@ class MessageBubble extends StatelessWidget {
             try {
               Uint8List? imageBytes = bytes;
               if (imageBytes == null && url != null) {
-                final req = await HttpClient().getUrl(Uri.parse(url));
-                final client = Get.find<AuthController>().client;
-                if (client.accessToken != null) {
-                  req.headers.set(
-                    'Authorization',
-                    'Bearer ${client.accessToken}',
-                  );
-                }
+                final req = await createPinnedIoHttpClient().getUrl(
+                  Uri.parse(url),
+                );
                 final res = await req.close();
                 imageBytes = Uint8List.fromList(
                   await res.expand((x) => x).toList(),
@@ -444,10 +439,6 @@ class MessageBubble extends StatelessWidget {
     if (avatarImageUrl != null) {
       return CachedNetworkImage(
         imageUrl: avatarImageUrl,
-        httpHeaders: {
-          if (client.accessToken != null)
-            'Authorization': 'Bearer ${client.accessToken}',
-        },
         imageBuilder: (context, imageProvider) => CircleAvatar(
           radius: 16,
           backgroundColor: const Color(0xFFD8DEE8),
@@ -526,10 +517,6 @@ class MessageBubble extends StatelessWidget {
       final avatarWidget = avatarImageUrl != null
           ? CachedNetworkImage(
               imageUrl: avatarImageUrl,
-              httpHeaders: {
-                if (client.accessToken != null)
-                  'Authorization': 'Bearer ${client.accessToken}',
-              },
               imageBuilder: (context, imageProvider) => Container(
                 width: s,
                 height: s,
@@ -909,15 +896,6 @@ class MessageBubble extends StatelessWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                _ActionButton(
-                  icon: Icons.translate_outlined,
-                  label: 'Translate',
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    HapticFeedback.lightImpact();
-                    onAction?.call(MessageAction.translate, event);
-                  },
-                ),
                 if (isMe)
                   _ActionButton(
                     icon: Icons.delete_outline,
@@ -1837,7 +1815,7 @@ class _MessageMeta extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(
-          timeFormat.format(event.originServerTs),
+          timeFormat.format(event.originServerTs.toLocal()),
           style: TextStyle(fontSize: 10, color: metaColor),
         ),
         if (isMe) ...[
@@ -2192,14 +2170,13 @@ class _MediaAttachmentBubbleState extends State<_MediaAttachmentBubble> {
   }
 
   Future<Uint8List> _matrixMediaGet(Client client, Uri url) async {
-    final fixed = withMatrixMediaAllowRedirect(
-      upgradeMatrixMediaV3UrlToClientV1(url),
+    final fixed = authenticatedMatrixMediaUri(
+      withMatrixMediaAllowRedirect(
+        upgradeMatrixMediaV3UrlToClientV1(url),
+      ),
+      client,
     );
-    final headers = <String, String>{};
-    if (client.accessToken != null) {
-      headers['Authorization'] = 'Bearer ${client.accessToken}';
-    }
-    final res = await client.httpClient.get(fixed, headers: headers);
+    final res = await client.httpClient.get(fixed);
     return res.bodyBytes;
   }
 
@@ -2335,22 +2312,28 @@ class _MediaAttachmentBubbleState extends State<_MediaAttachmentBubble> {
         if (mxc == null || !mxc.startsWith('mxc://')) return;
         final mxcUri = Uri.parse(mxc);
         final urls = [
-          withMatrixMediaAllowRedirect(
-            mxcToClientV1MediaThumbnail(
-              mxcUri,
-              client,
-              width: 250,
-              height: 250,
-              method: ThumbnailMethod.scale,
+          authenticatedMatrixMediaUri(
+            withMatrixMediaAllowRedirect(
+              mxcToClientV1MediaThumbnail(
+                mxcUri,
+                client,
+                width: 250,
+                height: 250,
+                method: ThumbnailMethod.scale,
+              ),
             ),
+            client,
           ).toString(),
-          withMatrixMediaAllowRedirect(
-            mxcUri.getThumbnail(
-              client,
-              width: 250,
-              height: 250,
-              method: ThumbnailMethod.scale,
+          authenticatedMatrixMediaUri(
+            withMatrixMediaAllowRedirect(
+              mxcUri.getThumbnail(
+                client,
+                width: 250,
+                height: 250,
+                method: ThumbnailMethod.scale,
+              ),
             ),
+            client,
           ).toString(),
         ];
         for (final u in urls) {
@@ -2366,11 +2349,17 @@ class _MediaAttachmentBubbleState extends State<_MediaAttachmentBubble> {
             final mainUri = Uri.parse(mainMxc);
             final v1Uri = mxcToClientV1MediaDownload(mainUri, client);
             final dlV1 = v1Uri.toString().isNotEmpty
-                ? withMatrixMediaAllowRedirect(v1Uri).toString()
+                ? authenticatedMatrixMediaUri(
+                    withMatrixMediaAllowRedirect(v1Uri),
+                    client,
+                  ).toString()
                 : '';
             final v3Uri = mainUri.getDownloadLink(client);
             final dlV3 = v3Uri.toString().isNotEmpty
-                ? withMatrixMediaAllowRedirect(v3Uri).toString()
+                ? authenticatedMatrixMediaUri(
+                    withMatrixMediaAllowRedirect(v3Uri),
+                    client,
+                  ).toString()
                 : '';
             _fullImageUrl = dlV1.isNotEmpty ? dlV1 : dlV3;
 
@@ -2507,9 +2496,6 @@ class _MediaAttachmentBubbleState extends State<_MediaAttachmentBubble> {
         builder: (_) => VideoPlayerScreen(
           encryptedBytes: resolvedBytes,
           videoUrl: videoUrl,
-          httpHeaders: client.accessToken != null
-              ? {'Authorization': 'Bearer ${client.accessToken}'}
-              : null,
           mimetype: mimetype,
         ),
       ),
@@ -2786,8 +2772,6 @@ class _MediaAttachmentBubbleState extends State<_MediaAttachmentBubble> {
       );
     }
 
-    final client = Get.find<AuthController>().client;
-
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
       child: GestureDetector(
@@ -2799,13 +2783,7 @@ class _MediaAttachmentBubbleState extends State<_MediaAttachmentBubble> {
                       _fullImageUrl ??
                       _previewUrlCandidates[_previewCandidateIndex];
                   widget.onImageTap!(
-                    CachedNetworkImageProvider(
-                      openUrl,
-                      headers: {
-                        if (client.accessToken != null)
-                          'Authorization': 'Bearer ${client.accessToken}',
-                      },
-                    ),
+                    CachedNetworkImageProvider(openUrl),
                     null,
                     openUrl,
                   );
@@ -2828,10 +2806,6 @@ class _MediaAttachmentBubbleState extends State<_MediaAttachmentBubble> {
                 child: CachedNetworkImage(
                   key: ValueKey(_previewUrlCandidates[_previewCandidateIndex]),
                   imageUrl: _previewUrlCandidates[_previewCandidateIndex],
-                  httpHeaders: {
-                    if (client.accessToken != null)
-                      'Authorization': 'Bearer ${client.accessToken}',
-                  },
                   memCacheWidth: _targetCacheExtent(context, displayWidth),
                   memCacheHeight: _targetCacheExtent(context, displayHeight),
                   maxWidthDiskCache: _targetCacheExtent(context, displayWidth),
@@ -3069,14 +3043,13 @@ class _AudioAttachmentBubbleState extends State<_AudioAttachmentBubble> {
 
   Future<void> _prepareEncryptedAudio(Client client, Event ev) async {
     Future<Uint8List> matrixMediaGet(Uri url) async {
-      final fixed = withMatrixMediaAllowRedirect(
-        upgradeMatrixMediaV3UrlToClientV1(url),
+      final fixed = authenticatedMatrixMediaUri(
+        withMatrixMediaAllowRedirect(
+          upgradeMatrixMediaV3UrlToClientV1(url),
+        ),
+        client,
       );
-      final headers = <String, String>{};
-      if (client.accessToken != null) {
-        headers['Authorization'] = 'Bearer ${client.accessToken}';
-      }
-      final res = await client.httpClient.get(fixed, headers: headers);
+      final res = await client.httpClient.get(fixed);
       return res.bodyBytes;
     }
 
@@ -3110,16 +3083,14 @@ class _AudioAttachmentBubbleState extends State<_AudioAttachmentBubble> {
     }
 
     final mxcUri = Uri.parse(mxc);
-    final url = withMatrixMediaAllowRedirect(
-      mxcToClientV1MediaDownload(mxcUri, client),
+    final url = authenticatedMatrixMediaUri(
+      withMatrixMediaAllowRedirect(
+        mxcToClientV1MediaDownload(mxcUri, client),
+      ),
+      client,
     );
 
-    final headers = <String, String>{};
-    if (client.accessToken != null) {
-      headers['Authorization'] = 'Bearer ${client.accessToken}';
-    }
-
-    final res = await client.httpClient.get(url, headers: headers);
+    final res = await client.httpClient.get(url);
     final bytes = res.bodyBytes;
 
     final tempDir = await getTemporaryDirectory();

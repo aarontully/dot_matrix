@@ -4,6 +4,33 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## [v1.0.6-alpha] - 2026-05-26
+
+### Added
+- **In-room search** — chats now include a dedicated room search flow so you can quickly jump to matching messages without backing out to the home screen.
+- **Persistent scheduled messages** — scheduled sends are now saved locally per room and restored after app restarts instead of disappearing when the process is killed.
+- **Spaces management** — added a Spaces management screen for creating, renaming, and deleting spaces from inside the app.
+- **Android notification actions** — incoming message notifications now expose direct actions to open the room or mark it as read.
+- **Android video PiP** — the fullscreen video player can now enter Android picture-in-picture mode on supported devices.
+
+### Changed
+- **Video playback controls** — the fullscreen player now includes quick seek controls and playback-speed selection alongside the scrubber.
+- **Push gateway storage** — configured push gateway URLs now live in secure storage instead of the plain local settings box, with stricter validation before registration.
+- **Matrix media auth** — authenticated media and avatar fetches now use Matrix media URLs directly instead of forwarding bearer headers through redirectable image requests.
+- **Transport hardening** — Matrix HTTP traffic and direct media downloads now validate HTTPS certificates against pinned/build-configured fingerprints and remember trusted certificates per host for subsequent sessions.
+
+### Fixed
+- **Startup failure handling** — app startup now surfaces storage/bootstrap failures instead of crashing or hanging on a blank screen when local settings or Firebase setup are unavailable.
+- **Stored-session restore** — saved Matrix sessions now keep error states visible, stop booting through connectivity failures, and always reuse the validated token during client initialization.
+- **Bridge media timeline performance** — bridge placeholder resolution now preindexes candidate media events instead of scanning the full timeline for every message.
+- **Mention rendering performance** — mention normalization now rewrites visible mentions in a single tokenized pass rather than running a replacement regex for every room participant.
+- **Redacted and dated timeline rendering** — redacted messages now render as deleted, and chat timestamps/date separators now respect local device time.
+- **Typing and room actions** — typing notifications are now sent to the room as you compose, Matrix user IDs are validated before starting a DM, and the unused translation action has been removed.
+- **Session and encryption helpers** — room/account-data waits now time out safely, bridge-identity sync is shared through Matrix account data, and avatar uploads keep the original source quality instead of being double-compressed.
+- **Room and notification edge cases** — room member counts are consistent, bot-name filtering no longer strips names like "Robot", notification IDs stay positive, and sync notifications can still appear while the app is inactive.
+
+## [v1.0.5-alpha] - 2026-05-26
+
 ### Added
 - **Notification opt-in onboarding** — fresh sign-ins now get a one-time prompt asking whether DotMatrix should turn notifications on, and the choice is saved for later.
 - **`@` mention suggestions in chat** — the composer now suggests room members as you type `@`, including bridged accounts, and inserts Matrix-resolvable mentions for the selected user.
@@ -18,6 +45,12 @@ All notable changes to this project will be documented in this file.
 - **Push setup guidance** — the project docs and Firebase runtime logging now call out the exact Android, iOS, APNs, and Matrix push-gateway pieces still required for real background delivery.
 - **Bridge identity updates refresh rooms immediately** — adding or removing an "also me" account now refreshes room summaries right away so member counts and bridge filtering stay in sync.
 - **Media scrolling path is lighter** — chat bubbles now cache resolved media preview state, decode preview images closer to display size, and defer full encrypted video downloads until you actually tap the video instead of doing that work while scrolling.
+- **Audio recording** — migrated from `flutter_sound` to `record` for broader platform support (Windows, macOS, iOS, Android).
+- **Audio playback** — migrated from `just_audio` to `audioplayers` for broader platform support (Windows, macOS, iOS, Android, Web, Linux).
+- **`pubspec.yaml` dependencies**:
+  - Removed `flutter_sound: ^9.2.13` and `just_audio: ^0.9.46`
+  - Added `record: ^5.2.0` and `audioplayers: ^6.0.0`
+  - `version`: `1.0.2+3` → `1.0.5-alpha+4`
 
 ### Fixed
 - **Mention name rendering** — sent and received mentions now display as readable `@Name` text in the timeline instead of raw Matrix mention syntax or bridged MXIDs.
@@ -28,22 +61,10 @@ All notable changes to this project will be documented in this file.
 - **Unverified-device send confirmation** — encrypted chats now warn before sending when the room has unverified Matrix devices, so people can choose whether to share room keys with those devices.
 - **Media send-state badges** — image, video, audio, and upload-placeholder bubbles now show the same pending/sent/error status indicator as text messages, driven from the underlying Matrix event status.
 - **Session removal re-authentication** — removing another signed-in device now handles Matrix homeservers that require password confirmation for device deletion instead of failing with a forbidden error.
-
-## [v1.0.5-alpha] - 2026-05-21
-
-### Fixed
 - **Fresh-session trust detection** — device setup, post-login verification prompts, chat warnings, and the Sessions list now treat the current device as trusted only after the session is actually signed by your account, which fixes cases where a brand-new login incorrectly showed as already verified.
 - **Olm to-device decryption failures on reinstall** — added a guard in `AuthController._init()` that resets the stored session when the local Matrix database is missing but credentials still exist in secure storage. This prevents the app from reusing an old `deviceId` with a fresh Olm account, which breaks decryption of cross-device messages.
 - **macOS dynamic library loading** — added `/opt/homebrew/lib` to `LD_RUNPATH_SEARCH_PATHS` and extended the Flutter embed build script to copy `libcrypto.3.dylib` and `libolm.3.dylib` into the app bundle's `Contents/Frameworks` directory after each build. Also installed `libolm` via Homebrew, which the Matrix SDK requires for E2EE on desktop.
 - **macOS keychain access (debug)** — removed `com.apple.security.app-sandbox` from `DebugProfile.entitlements` so `flutter_secure_storage` can access the keychain during unsigned local debug builds. The sandbox remains enabled in `Release.entitlements` for production.
-
-### Changed
-- **Audio recording** — migrated from `flutter_sound` to `record` for broader platform support (Windows, macOS, iOS, Android).
-- **Audio playback** — migrated from `just_audio` to `audioplayers` for broader platform support (Windows, macOS, iOS, Android, Web, Linux).
-- **`pubspec.yaml` dependencies**:
-  - Removed `flutter_sound: ^9.2.13` and `just_audio: ^0.9.46`
-  - Added `record: ^5.2.0` and `audioplayers: ^6.0.0`
-  - `version`: `1.0.2+3` → `1.0.5-alpha+4`
 
 ## [v1.0.4-alpha] - 2026-05-20
 

@@ -285,11 +285,6 @@ class _RoomDetailsScreenState extends State<RoomDetailsScreen> {
                                         ? ClipOval(
                                             child: CachedNetworkImage(
                                               imageUrl: resolved,
-                                              httpHeaders: {
-                                                if (client.accessToken != null)
-                                                  'Authorization':
-                                                      'Bearer ${client.accessToken}',
-                                              },
                                               width: 40,
                                               height: 40,
                                               fit: BoxFit.cover,
