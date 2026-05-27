@@ -26,6 +26,7 @@ class AuthController extends GetxController with StateMixin<String?> {
   static const _storageDeviceIdKey = 'matrix_device_id';
   static const _storageDeviceNameKey = 'matrix_device_name';
   static const _defaultDeviceName = 'DotMatrix';
+  static const _storedSessionValidationTimeout = Duration(seconds: 8);
 
   final FlutterSecureStorage _storage = const FlutterSecureStorage(
     mOptions: MacOsOptions(useDataProtectionKeyChain: true),
@@ -159,7 +160,7 @@ class AuthController extends GetxController with StateMixin<String?> {
           accessToken: accessToken,
           userId: userId,
           deviceId: deviceId,
-        );
+        ).timeout(_storedSessionValidationTimeout);
         if (!isStoredSessionValid) {
           await _resetStoredSession();
           change(null, status: RxStatus.success());
@@ -172,15 +173,12 @@ class AuthController extends GetxController with StateMixin<String?> {
           return;
         }
         if (_isConnectivityError(error)) {
-          change(
-            null,
-            status: RxStatus.error(
-              'Could not validate your saved session because the network is unavailable. Reconnect and try again.',
-            ),
+          _debugLog(
+            'Stored session validation unavailable, continuing with cached session: $error',
           );
-          return;
+        } else {
+          rethrow;
         }
-        rethrow;
       }
 
       _client = await _createClient();

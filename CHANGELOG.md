@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## [v1.0.8-alpha] - 2026-05-27
+
+### Fixed
+- **Opening-screen startup hang** — restoring a saved Matrix session no longer waits indefinitely on remote token validation before the app can open. When the homeserver is slow or temporarily unreachable, Dot Matrix now falls back to the cached local session instead of leaving the launch loader stuck.
+
 ## [v1.0.7-alpha] - 2026-05-27
 
 ### Changed
