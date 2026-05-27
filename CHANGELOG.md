@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## [v1.0.10-alpha] - 2026-05-27
+
+### Fixed
+- **Android secure-storage recovery** — corrupted encrypted storage entries now recover back to a clean signed-out state instead of surfacing `BAD_DECRYPT` / `BadPaddingException` startup errors when `flutter_secure_storage` cannot decrypt saved app secrets.
+
 ## [v1.0.9-alpha] - 2026-05-27
 
 ### Fixed

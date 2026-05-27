@@ -13,6 +13,7 @@ import '../services/push_notification_service.dart';
 import '../utils/pinned_http_client.dart';
 import '../utils/avatar_url_resolver.dart';
 import '../utils/current_session_trust.dart';
+import '../utils/secure_storage_recovery.dart';
 import '../screens/device_setup_screen.dart';
 import 'room_controller.dart';
 import 'settings_controller.dart';
@@ -135,11 +136,45 @@ class AuthController extends GetxController with StateMixin<String?> {
     _client = await _createClient();
   }
 
+  Future<bool> _recoverFromCorruptedSecureStorage(
+    Object error, {
+    StackTrace? stackTrace,
+  }) async {
+    if (!isSecureStorageDecryptionError(error)) {
+      return false;
+    }
+
+    _debugLog('Secure storage decryption failed, clearing app secrets.');
+    if (kDebugMode && stackTrace != null) {
+      debugPrint('$stackTrace');
+    }
+
+    await clearSecureStorageSafely(_storage);
+    await _clearMatrixCache();
+    clearBrokenAvatarSources();
+    _verificationSubscription?.cancel();
+    _verificationSubscription = null;
+    _client = await _createClient();
+    change(null, status: RxStatus.success());
+    return true;
+  }
+
   Future<void> _init() async {
     change(null, status: RxStatus.loading());
     try {
       _debugLog('Restoring stored session...');
-      final storedValues = await _storage.readAll();
+      final storedValues = await _storage.readAll().catchError((
+        Object error,
+        StackTrace stackTrace,
+      ) async {
+        if (await _recoverFromCorruptedSecureStorage(
+          error,
+          stackTrace: stackTrace,
+        )) {
+          return <String, String>{};
+        }
+        throw error;
+      });
       final accessToken = storedValues[_storageTokenKey];
       final userId = storedValues[_storageUserIdKey];
       final homeserver = storedValues[_storageHomeserverKey];
@@ -217,6 +252,12 @@ class AuthController extends GetxController with StateMixin<String?> {
       _debugLog('_init failed: $error');
       if (kDebugMode) {
         debugPrint('$stackTrace');
+      }
+      if (await _recoverFromCorruptedSecureStorage(
+        error,
+        stackTrace: stackTrace,
+      )) {
+        return;
       }
       if (_isInvalidTokenError(error)) {
         await _resetStoredSession();

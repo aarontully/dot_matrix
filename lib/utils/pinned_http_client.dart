@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 
+import 'secure_storage_recovery.dart';
+
 const String _configuredTlsPins = String.fromEnvironment(
   'DOT_MATRIX_TLS_PINS',
   defaultValue: '',
@@ -36,14 +38,30 @@ Future<void> validatePinnedTlsCertificate(
   }
 
   final storageKey = 'tls_pin::${url.host.toLowerCase()}';
-  final storedPin = await _tlsStorage.read(key: storageKey);
+  String? storedPin;
+  try {
+    storedPin = await _tlsStorage.read(key: storageKey);
+  } catch (error) {
+    if (isSecureStorageDecryptionError(error)) {
+      try {
+        await _tlsStorage.delete(key: storageKey);
+      } catch (_) {
+        // Best effort cleanup for a broken stored pin.
+      }
+      storedPin = null;
+    } else {
+      rethrow;
+    }
+  }
   if (storedPin == null || storedPin.isEmpty) {
     await _tlsStorage.write(key: storageKey, value: fingerprint);
     return;
   }
 
   if (configuredPins.isEmpty && storedPin != fingerprint) {
-    throw HandshakeException('TLS certificate changed unexpectedly for ${url.host}');
+    throw HandshakeException(
+      'TLS certificate changed unexpectedly for ${url.host}',
+    );
   }
 }
 
@@ -112,8 +130,9 @@ class _PinnedHttpClient extends http.BaseClient {
           throw http.ClientException(httpException.message, httpException.uri);
         }, test: (error) => error is HttpException),
         response.statusCode,
-        contentLength:
-            response.contentLength == -1 ? null : response.contentLength,
+        contentLength: response.contentLength == -1
+            ? null
+            : response.contentLength,
         request: request,
         headers: headers,
         isRedirect: response.isRedirect,

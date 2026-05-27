@@ -12,6 +12,7 @@ import '../config/push_defaults.dart';
 import '../models/device_session_info.dart';
 import '../models/settings_state.dart';
 import '../utils/current_session_trust.dart';
+import '../utils/secure_storage_recovery.dart';
 import 'auth_controller.dart';
 import 'room_controller.dart';
 import '../services/push_notification_service.dart';
@@ -758,9 +759,21 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
   }
 
   Future<String?> _readStoredPushGatewayUrl() async {
-    final secureValue = await _secureStorage.read(
-      key: _pushGatewayUrlStorageKey,
-    );
+    String? secureValue;
+    try {
+      secureValue = await _secureStorage.read(key: _pushGatewayUrlStorageKey);
+    } catch (error) {
+      if (isSecureStorageDecryptionError(error)) {
+        try {
+          await _secureStorage.delete(key: _pushGatewayUrlStorageKey);
+        } catch (_) {
+          // Best effort cleanup for a broken push-gateway entry.
+        }
+        secureValue = null;
+      } else {
+        rethrow;
+      }
+    }
     if (secureValue != null && secureValue.trim().isNotEmpty) {
       return secureValue.trim();
     }
