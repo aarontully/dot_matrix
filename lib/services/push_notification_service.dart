@@ -94,6 +94,8 @@ void _notificationTapBackground(NotificationResponse details) {
 }
 
 class PushNotificationService with WidgetsBindingObserver {
+  static const _pluginInitializationTimeout = Duration(seconds: 5);
+
   static final PushNotificationService _instance =
       PushNotificationService._internal();
   factory PushNotificationService() => _instance;
@@ -105,6 +107,7 @@ class PushNotificationService with WidgetsBindingObserver {
 
   StreamSubscription<SyncUpdate>? _syncSubscription;
   bool _initialized = false;
+  bool _localNotificationsReady = false;
   String? _currentToken;
   String? _activeRoomId;
   String? _boundUserId;
@@ -131,27 +134,41 @@ class PushNotificationService with WidgetsBindingObserver {
       _messaging = null;
     }
 
-    const androidSettings = AndroidInitializationSettings(_notificationIcon);
-    const darwinSettings = DarwinInitializationSettings(
-      requestAlertPermission: false,
-      requestBadgePermission: false,
-      requestSoundPermission: false,
-    );
-    const initSettings = InitializationSettings(
-      android: androidSettings,
-      iOS: darwinSettings,
-      macOS: darwinSettings,
-    );
-    await _localNotifications.initialize(
-      initSettings,
-      onDidReceiveNotificationResponse: _handleNotificationResponse,
-      onDidReceiveBackgroundNotificationResponse: _notificationTapBackground,
-    );
+    try {
+      const androidSettings = AndroidInitializationSettings(_notificationIcon);
+      const darwinSettings = DarwinInitializationSettings(
+        requestAlertPermission: false,
+        requestBadgePermission: false,
+        requestSoundPermission: false,
+      );
+      const initSettings = InitializationSettings(
+        android: androidSettings,
+        iOS: darwinSettings,
+        macOS: darwinSettings,
+      );
+      await _localNotifications
+          .initialize(
+            initSettings,
+            onDidReceiveNotificationResponse: _handleNotificationResponse,
+            onDidReceiveBackgroundNotificationResponse:
+                _notificationTapBackground,
+          )
+          .timeout(_pluginInitializationTimeout);
 
-    await _createChannels();
-    WidgetsBinding.instance.addObserver(this);
+      await _createChannels().timeout(_pluginInitializationTimeout);
+      WidgetsBinding.instance.addObserver(this);
+      _localNotificationsReady = true;
+    } catch (error) {
+      if (kDebugMode) {
+        debugPrint('[Push] Local notifications unavailable: $error');
+      }
+      _localNotificationsReady = false;
+    }
+
     _initialized = true;
-    await _processPendingNotificationResponses();
+    if (_localNotificationsReady) {
+      await _processPendingNotificationResponses();
+    }
   }
 
   Future<void> bindClient(Client client) async {
@@ -271,10 +288,7 @@ class PushNotificationService with WidgetsBindingObserver {
     final client = Get.find<AuthController>().client;
     final appId = _platformPusherAppId();
     if (appId == null) return;
-    final pusherId = PusherId(
-      appId: appId,
-      pushkey: _currentToken!,
-    );
+    final pusherId = PusherId(appId: appId, pushkey: _currentToken!);
 
     try {
       await client.deletePusher(pusherId);
@@ -386,6 +400,10 @@ class PushNotificationService with WidgetsBindingObserver {
     required Event event,
     required bool isHighlight,
   }) async {
+    if (!_localNotificationsReady) {
+      return;
+    }
+
     final roomName = room.getLocalizedDisplayname().trim();
     final senderName = event.senderFromMemoryOrFallback.calcDisplayname();
     final preview = _notificationPreview(event);
@@ -610,7 +628,9 @@ class PushNotificationService with WidgetsBindingObserver {
   bool _markRoomAsReadFromPayload(String payload) {
     final roomId = _roomIdFromPayload(payload);
     final eventId = _eventIdFromPayload(payload);
-    if (roomId == null || eventId == null || !Get.isRegistered<AuthController>()) {
+    if (roomId == null ||
+        eventId == null ||
+        !Get.isRegistered<AuthController>()) {
       return false;
     }
 
@@ -699,10 +719,7 @@ NotificationDetails _notificationDetails({required bool highlight}) {
         'Open',
         showsUserInterface: true,
       ),
-      AndroidNotificationAction(
-        _notificationActionMarkRead,
-        'Mark as read',
-      ),
+      AndroidNotificationAction(_notificationActionMarkRead, 'Mark as read'),
     ],
   );
   const darwinDetails = DarwinNotificationDetails();
@@ -716,39 +733,45 @@ NotificationDetails _notificationDetails({required bool highlight}) {
 Future<void> _ensureBackgroundNotificationsInitialized() async {
   if (_backgroundNotificationsInitialized) return;
 
-  const androidSettings = AndroidInitializationSettings(_notificationIcon);
-  const darwinSettings = DarwinInitializationSettings(
-    requestAlertPermission: false,
-    requestBadgePermission: false,
-    requestSoundPermission: false,
-  );
-  await _backgroundLocalNotifications.initialize(
-    const InitializationSettings(
-      android: androidSettings,
-      iOS: darwinSettings,
-      macOS: darwinSettings,
-    ),
-  );
+  try {
+    const androidSettings = AndroidInitializationSettings(_notificationIcon);
+    const darwinSettings = DarwinInitializationSettings(
+      requestAlertPermission: false,
+      requestBadgePermission: false,
+      requestSoundPermission: false,
+    );
+    await _backgroundLocalNotifications.initialize(
+      const InitializationSettings(
+        android: androidSettings,
+        iOS: darwinSettings,
+        macOS: darwinSettings,
+      ),
+    );
 
-  const messagesChannel = AndroidNotificationChannel(
-    _messagesChannelId,
-    'Messages',
-    description: 'Incoming chat messages',
-    importance: Importance.high,
-  );
-  const mentionsChannel = AndroidNotificationChannel(
-    _mentionsChannelId,
-    'Mentions',
-    description: 'Mentions and highlighted activity',
-    importance: Importance.high,
-  );
-  final android = _backgroundLocalNotifications
-      .resolvePlatformSpecificImplementation<
-        AndroidFlutterLocalNotificationsPlugin
-      >();
-  await android?.createNotificationChannel(messagesChannel);
-  await android?.createNotificationChannel(mentionsChannel);
-  _backgroundNotificationsInitialized = true;
+    const messagesChannel = AndroidNotificationChannel(
+      _messagesChannelId,
+      'Messages',
+      description: 'Incoming chat messages',
+      importance: Importance.high,
+    );
+    const mentionsChannel = AndroidNotificationChannel(
+      _mentionsChannelId,
+      'Mentions',
+      description: 'Mentions and highlighted activity',
+      importance: Importance.high,
+    );
+    final android = _backgroundLocalNotifications
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >();
+    await android?.createNotificationChannel(messagesChannel);
+    await android?.createNotificationChannel(mentionsChannel);
+    _backgroundNotificationsInitialized = true;
+  } catch (error) {
+    if (kDebugMode) {
+      debugPrint('[Push] Background notifications unavailable: $error');
+    }
+  }
 }
 
 Future<File> _pendingNotificationQueueFile() async {
@@ -767,14 +790,17 @@ Future<void> _enqueuePendingNotificationResponse({
 
   final file = await _pendingNotificationQueueFile();
   final pending = await _drainPendingNotificationResponses();
-  pending.add(_QueuedNotificationResponse(actionId: actionId, payload: payload));
+  pending.add(
+    _QueuedNotificationResponse(actionId: actionId, payload: payload),
+  );
   await file.writeAsString(
     jsonEncode(pending.map((entry) => entry.toJson()).toList()),
     flush: true,
   );
 }
 
-Future<List<_QueuedNotificationResponse>> _drainPendingNotificationResponses() async {
+Future<List<_QueuedNotificationResponse>>
+_drainPendingNotificationResponses() async {
   final file = await _pendingNotificationQueueFile();
   if (!await file.exists()) {
     return <_QueuedNotificationResponse>[];
@@ -813,8 +839,5 @@ class _QueuedNotificationResponse {
   final String? actionId;
   final String? payload;
 
-  Map<String, dynamic> toJson() => {
-    'action_id': actionId,
-    'payload': payload,
-  };
+  Map<String, dynamic> toJson() => {'action_id': actionId, 'payload': payload};
 }

@@ -102,6 +102,17 @@ class AuthController extends GetxController with StateMixin<String?> {
     }
   }
 
+  void _runInBackground(Future<void> Function() task, {required String label}) {
+    unawaited(
+      task().catchError((Object error, StackTrace stackTrace) {
+        _debugLog('$label failed: $error');
+        if (kDebugMode) {
+          debugPrint('$stackTrace');
+        }
+      }),
+    );
+  }
+
   Future<bool> _validateStoredSession({
     required Uri homeserver,
     required String accessToken,
@@ -196,10 +207,12 @@ class AuthController extends GetxController with StateMixin<String?> {
         onTimeout: () => Future.value(),
       );
       _setupVerificationListener();
-      await PushNotificationService().bindClient(_client);
-      await _maybeRegisterPusher();
       change(userId, status: RxStatus.success());
-      await _maybePromptDeviceVerification();
+      _runInBackground(() async {
+        await PushNotificationService().bindClient(_client);
+        await _maybeRegisterPusher();
+        await _maybePromptDeviceVerification();
+      }, label: 'post-restore setup');
     } catch (error, stackTrace) {
       _debugLog('_init failed: $error');
       if (kDebugMode) {
@@ -254,10 +267,12 @@ class AuthController extends GetxController with StateMixin<String?> {
 
       clearBrokenAvatarSources();
       _setupVerificationListener();
-      await PushNotificationService().bindClient(_client);
-      await _maybeRegisterPusher();
       change(loginResponse.userId, status: RxStatus.success());
-      await _runFreshLoginOnboarding();
+      _runInBackground(() async {
+        await PushNotificationService().bindClient(_client);
+        await _maybeRegisterPusher();
+        await _runFreshLoginOnboarding();
+      }, label: 'post-login setup');
     } catch (error) {
       change(null, status: RxStatus.error(error.toString()));
     }

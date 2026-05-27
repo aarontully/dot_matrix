@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## [v1.0.9-alpha] - 2026-05-27
+
+### Fixed
+- **Startup blocked by notification setup** — app launch and saved-session restore no longer wait for local notification/plugin initialization before showing the UI, and the Android notification icon resource has been restored to the pre-`v1.0.7-alpha` vector so notification setup failures stop freezing the app on open.
+
 ## [v1.0.8-alpha] - 2026-05-27
 
 ### Fixed
