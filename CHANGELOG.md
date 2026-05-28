@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## [v1.0.11-alpha] - 2026-05-29
+
+### Changed
+- **First-time device setup** — onboarding now focuses on verifying the device only; encrypted-history backup restore stays available from Settings > Encryption instead of blocking first-time setup completion.
+
+### Fixed
+- **Reopen crypto-key restore failure** — `AuthController._init()` now passes the stored `olm_account` back to the Matrix SDK when restoring a session. Previously the SDK ignored the saved crypto state whenever `newToken` was supplied, generated a fresh Olm account on every app launch, and then failed to upload the conflicting device keys. This caused users to be silently logged out on every reopen.
+- **Notification setup retries** — local/Firebase notification initialization is retried when enabling notifications or rebinding after app restore, so a transient startup failure no longer leaves notifications unavailable for the rest of the run.
+- **Verification completion state** — device setup now marks verification complete immediately after a successful SAS flow and rechecks verification state before refreshing the screen.
+
 ## [v1.0.10-alpha] - 2026-05-27
 
 ### Fixed

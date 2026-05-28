@@ -166,7 +166,7 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
           await client.updateUserDeviceKeys(additionalUsers: {userId});
           await client.userDeviceKeysLoading;
           final ownKeys = client.userDeviceKeys[userId];
-          isCurrentDeviceVerified = isCurrentSessionTrusted(client);
+          isCurrentDeviceVerified = isCurrentSessionVerified(client);
           final otherDeviceKeys =
               ownKeys?.deviceKeys.values
                   .where((dk) => dk.deviceId != client.deviceID)
@@ -1250,6 +1250,14 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
   }
 
   Future<void> refreshAfterDeviceVerification() async {
+    final current = state;
+    if (current != null) {
+      change(
+        current.copyWith(isCurrentDeviceVerified: true),
+        status: RxStatus.success(),
+      );
+    }
+
     final client = Get.find<AuthController>().client;
     final encryption = client.encryption;
     if (encryption != null) {
@@ -1257,7 +1265,26 @@ class SettingsController extends GetxController with StateMixin<SettingsState> {
     }
     await Get.find<RoomController>().requestMissingEncryptionKeys();
     await Get.find<RoomController>().refreshRooms(rebuildTimelines: true);
+    await _waitForCurrentDeviceVerification(client);
     await refreshSettings();
+  }
+
+  Future<void> _waitForCurrentDeviceVerification(Client client) async {
+    final userId = client.userID;
+    if (userId == null || client.deviceID == null) return;
+
+    for (var attempt = 0; attempt < 6; attempt++) {
+      try {
+        await client.updateUserDeviceKeys(additionalUsers: {userId});
+        await client.userDeviceKeysLoading;
+        if (isCurrentSessionVerified(client)) {
+          return;
+        }
+      } catch (_) {
+        // The final refresh will surface the latest state we could load.
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+    }
   }
 
   Future<KeyVerification> startDeviceVerification({String? deviceId}) async {

@@ -114,18 +114,13 @@ class SettingsState {
   bool get needsDeviceVerification =>
       encryptionEnabled && !isCurrentDeviceVerified;
 
-  bool get needsDeviceSetup =>
-      encryptionEnabled &&
-      (needsEncryptedHistorySetup || needsDeviceVerification);
+  bool get needsDeviceSetup => needsDeviceVerification;
 
-  int get totalDeviceSetupSteps => encryptionEnabled ? 2 : 0;
+  int get totalDeviceSetupSteps => encryptionEnabled ? 1 : 0;
 
   int get completedDeviceSetupSteps {
     if (!encryptionEnabled) return 0;
-    var completed = 0;
-    if (encryptedHistoryReady) completed++;
-    if (isCurrentDeviceVerified) completed++;
-    return completed;
+    return isCurrentDeviceVerified ? 1 : 0;
   }
 
   int get remainingDeviceSetupSteps =>

@@ -603,12 +603,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                       const SizedBox(height: 10),
                       Text(
-                        settings.needsEncryptedHistorySetup &&
-                                settings.needsDeviceVerification
-                            ? 'Finish recovery and trust setup in one place so this device feels fully ready.'
-                            : settings.needsEncryptedHistorySetup
-                            ? 'This device is connected, but it still needs your backup keys to read older secure history smoothly.'
-                            : 'This device can already read encrypted history, but it should still be verified as trusted.',
+                        'Verify this session from another signed-in Matrix app. You can restore older encrypted history later from Settings > Encryption.',
                         style: TextStyle(
                           color: cs.onTertiaryContainer.withValues(alpha: 0.88),
                           height: 1.4,

@@ -1,7 +1,7 @@
 name: dot_matrix
 description: "Dot Matrix - A secure, cross-platform Matrix chat client with end-to-end encryption, rich messaging, and a modern Material 3 interface."
 publish_to: 'none'
-version: 1.0.10-alpha+9
+version: 1.0.11-alpha+10
 
 environment:
   sdk: ^3.9.2

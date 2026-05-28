@@ -105,9 +105,12 @@ class PushNotificationService with WidgetsBindingObserver {
   final FlutterLocalNotificationsPlugin _localNotifications =
       FlutterLocalNotificationsPlugin();
 
+  Future<void>? _initializationFuture;
+  StreamSubscription<String>? _tokenRefreshSubscription;
   StreamSubscription<SyncUpdate>? _syncSubscription;
   bool _initialized = false;
   bool _localNotificationsReady = false;
+  bool _widgetsObserverRegistered = false;
   String? _currentToken;
   String? _activeRoomId;
   String? _boundUserId;
@@ -115,17 +118,53 @@ class PushNotificationService with WidgetsBindingObserver {
   AppLifecycleState _appLifecycleState = AppLifecycleState.resumed;
   final Map<String, _RoomNotificationSnapshot> _roomSnapshots = {};
 
-  Future<void> initialize() async {
-    if (_initialized) return;
+  Future<void> initialize({bool retryUnavailable = false}) async {
+    final runningInitialization = _initializationFuture;
+    if (runningInitialization != null) {
+      await runningInitialization;
+      if (retryUnavailable &&
+          (_messaging == null || !_localNotificationsReady)) {
+        await initialize(retryUnavailable: true);
+      }
+      return;
+    }
 
+    if (_initialized &&
+        (!retryUnavailable ||
+            (_messaging != null && _localNotificationsReady))) {
+      if (_localNotificationsReady) {
+        await _processPendingNotificationResponses();
+      }
+      return;
+    }
+
+    final initialization = _initializeInternal(
+      retryUnavailable: retryUnavailable,
+    );
+    _initializationFuture = initialization;
     try {
-      await Firebase.initializeApp().timeout(const Duration(seconds: 5));
-      _messaging = FirebaseMessaging.instance;
-      FirebaseMessaging.onBackgroundMessage(
-        _firebaseMessagingBackgroundHandler,
-      );
-      _messaging!.onTokenRefresh.listen(_onTokenRefresh);
-      _currentToken = await _loadCurrentPushKey();
+      await initialization;
+    } finally {
+      if (identical(_initializationFuture, initialization)) {
+        _initializationFuture = null;
+      }
+    }
+  }
+
+  Future<void> _initializeInternal({required bool retryUnavailable}) async {
+    try {
+      if (!_initialized || retryUnavailable || _messaging == null) {
+        await Firebase.initializeApp().timeout(const Duration(seconds: 5));
+        _messaging = FirebaseMessaging.instance;
+        FirebaseMessaging.onBackgroundMessage(
+          _firebaseMessagingBackgroundHandler,
+        );
+        await _tokenRefreshSubscription?.cancel();
+        _tokenRefreshSubscription = _messaging!.onTokenRefresh.listen(
+          _onTokenRefresh,
+        );
+        _currentToken = await _loadCurrentPushKey();
+      }
     } catch (error) {
       if (kDebugMode) {
         debugPrint('[Push] Firebase not configured: $error');
@@ -135,29 +174,36 @@ class PushNotificationService with WidgetsBindingObserver {
     }
 
     try {
-      const androidSettings = AndroidInitializationSettings(_notificationIcon);
-      const darwinSettings = DarwinInitializationSettings(
-        requestAlertPermission: false,
-        requestBadgePermission: false,
-        requestSoundPermission: false,
-      );
-      const initSettings = InitializationSettings(
-        android: androidSettings,
-        iOS: darwinSettings,
-        macOS: darwinSettings,
-      );
-      await _localNotifications
-          .initialize(
-            initSettings,
-            onDidReceiveNotificationResponse: _handleNotificationResponse,
-            onDidReceiveBackgroundNotificationResponse:
-                _notificationTapBackground,
-          )
-          .timeout(_pluginInitializationTimeout);
+      if (!_initialized || retryUnavailable || !_localNotificationsReady) {
+        const androidSettings = AndroidInitializationSettings(
+          _notificationIcon,
+        );
+        const darwinSettings = DarwinInitializationSettings(
+          requestAlertPermission: false,
+          requestBadgePermission: false,
+          requestSoundPermission: false,
+        );
+        const initSettings = InitializationSettings(
+          android: androidSettings,
+          iOS: darwinSettings,
+          macOS: darwinSettings,
+        );
+        await _localNotifications
+            .initialize(
+              initSettings,
+              onDidReceiveNotificationResponse: _handleNotificationResponse,
+              onDidReceiveBackgroundNotificationResponse:
+                  _notificationTapBackground,
+            )
+            .timeout(_pluginInitializationTimeout);
 
-      await _createChannels().timeout(_pluginInitializationTimeout);
-      WidgetsBinding.instance.addObserver(this);
-      _localNotificationsReady = true;
+        await _createChannels().timeout(_pluginInitializationTimeout);
+        if (!_widgetsObserverRegistered) {
+          WidgetsBinding.instance.addObserver(this);
+          _widgetsObserverRegistered = true;
+        }
+        _localNotificationsReady = true;
+      }
     } catch (error) {
       if (kDebugMode) {
         debugPrint('[Push] Local notifications unavailable: $error');
@@ -172,7 +218,7 @@ class PushNotificationService with WidgetsBindingObserver {
   }
 
   Future<void> bindClient(Client client) async {
-    await initialize();
+    await initialize(retryUnavailable: true);
     _syncSubscription?.cancel();
     _boundUserId = client.userID;
     _seedRoomSnapshots(client);
@@ -200,7 +246,7 @@ class PushNotificationService with WidgetsBindingObserver {
   }
 
   Future<bool> requestPermission() async {
-    await initialize();
+    await initialize(retryUnavailable: true);
 
     var granted = false;
 
@@ -242,14 +288,19 @@ class PushNotificationService with WidgetsBindingObserver {
         iosGranted == null &&
         macGranted == null &&
         _messaging == null) {
-      // Platforms without runtime notification permission simply no-op here.
-      granted = true;
+      granted = switch (defaultTargetPlatform) {
+        TargetPlatform.android ||
+        TargetPlatform.iOS ||
+        TargetPlatform.macOS => false,
+        _ => true,
+      };
     }
 
     return granted;
   }
 
   Future<void> registerPusher(String pushGatewayUrl) async {
+    await initialize(retryUnavailable: true);
     if (_messaging == null) return;
     _currentToken ??= await _loadCurrentPushKey();
     if (_currentToken == null) {
@@ -283,6 +334,7 @@ class PushNotificationService with WidgetsBindingObserver {
   }
 
   Future<void> unregisterPusher() async {
+    await initialize(retryUnavailable: true);
     if (_currentToken == null) return;
 
     final client = Get.find<AuthController>().client;

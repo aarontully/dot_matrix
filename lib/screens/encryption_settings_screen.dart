@@ -249,12 +249,7 @@ class _EncryptionSettingsScreenState extends State<EncryptionSettingsScreen> {
           ),
           const SizedBox(height: 10),
           Text(
-            settings.needsEncryptedHistorySetup &&
-                    settings.needsDeviceVerification
-                ? 'Finish recovery and trust setup in one place so this device can read older encrypted chats smoothly.'
-                : settings.needsEncryptedHistorySetup
-                ? 'This device can send and receive encrypted messages, but it still needs your backup keys to read older secure history smoothly.'
-                : 'This device can already read encrypted history, but it still should be verified as a trusted device.',
+            'Verify this session from another signed-in Matrix app. Backup restore is still available below when you need older encrypted history.',
             style: TextStyle(
               color: theme.colorScheme.onSurface.withValues(alpha: 0.78),
               height: 1.4,

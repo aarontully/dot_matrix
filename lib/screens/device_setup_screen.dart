@@ -19,8 +19,6 @@ class DeviceSetupScreen extends StatefulWidget {
 }
 
 class _DeviceSetupScreenState extends State<DeviceSetupScreen> {
-  final _recoveryController = TextEditingController();
-
   @override
   Widget build(BuildContext context) {
     final settingsController = Get.find<SettingsController>();
@@ -101,63 +99,12 @@ class _DeviceSetupScreenState extends State<DeviceSetupScreen> {
             const SizedBox(height: 16),
             _buildStepCard(
               context,
-              icon: Icons.lock_open_outlined,
-              title: 'Restore encrypted history',
-              isComplete: settings.encryptedHistoryReady,
-              accentColor: const Color(0xFF2B7FFF),
-              description: settings.encryptedHistoryReady
-                  ? 'Older encrypted messages are ready on this device.'
-                  : settings.secureBackupAvailable
-                  ? 'Enter your recovery key or backup passphrase to unlock older encrypted chats.'
-                  : 'Secure Backup is not available for this account right now. You can still verify another signed-in device to request keys.',
-              child: settings.encryptedHistoryReady
-                  ? const SizedBox.shrink()
-                  : settings.secureBackupAvailable
-                  ? Column(
-                      children: [
-                        TextField(
-                          controller: _recoveryController,
-                          enabled: !settings.isRestoringEncryption,
-                          autocorrect: false,
-                          enableSuggestions: false,
-                          textInputAction: TextInputAction.done,
-                          decoration: const InputDecoration(
-                            labelText: 'Recovery key or passphrase',
-                            hintText: 'Paste your Matrix recovery key',
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        SizedBox(
-                          width: double.infinity,
-                          child: FilledButton.icon(
-                            onPressed: settings.isRestoringEncryption
-                                ? null
-                                : _restoreEncryptedHistory,
-                            icon: const Icon(Icons.key_outlined),
-                            label: Text(
-                              settings.isRestoringEncryption
-                                  ? 'Restoring...'
-                                  : 'Restore now',
-                            ),
-                          ),
-                        ),
-                      ],
-                    )
-                  : _buildInfoPill(
-                      cs,
-                      Icons.info_outline,
-                      'Use verification below or open another trusted Matrix app already signed into this account.',
-                    ),
-            ),
-            const SizedBox(height: 16),
-            _buildStepCard(
-              context,
               icon: Icons.verified_user_outlined,
               title: 'Verify this device',
               isComplete: settings.isCurrentDeviceVerified,
               accentColor: const Color(0xFF00A37A),
               description: settings.isCurrentDeviceVerified
-                  ? 'This device is trusted and can smoothly access encrypted history.'
+                  ? 'This device has been verified from another signed-in session.'
                   : settings.hasOtherDeviceSessions
                   ? 'Confirm this device from another signed-in Matrix app to make encrypted history sharing smoother.'
                   : 'No other signed-in devices were found yet. Sign into another Matrix app first if you want to verify this device.',
@@ -192,6 +139,12 @@ class _DeviceSetupScreenState extends State<DeviceSetupScreen> {
                     ),
             ),
             const SizedBox(height: 16),
+            _buildInfoPill(
+              cs,
+              Icons.lock_open_outlined,
+              'Need older encrypted history? Restore from backup any time in Settings > Encryption.',
+            ),
+            const SizedBox(height: 16),
             _buildStatusSnapshot(settings, cs),
           ],
         ),
@@ -224,7 +177,7 @@ class _DeviceSetupScreenState extends State<DeviceSetupScreen> {
           const SizedBox(height: 8),
           Text(
             settings.needsDeviceSetup
-                ? 'We will help this device read older encrypted chats and become trusted.'
+                ? 'We will help this device become verified from another signed-in session.'
                 : 'This device is already ready for encrypted chats.',
             style: TextStyle(
               color: cs.onPrimaryContainer.withValues(alpha: 0.86),
@@ -265,8 +218,8 @@ class _DeviceSetupScreenState extends State<DeviceSetupScreen> {
           const SizedBox(height: 10),
           Text(
             settings.needsDeviceSetup
-                ? 'Use this guide to finish recovery and trust setup in one place.'
-                : 'Everything needed for encrypted chats is already ready on this device.',
+                ? 'Use this guide to verify this session from another signed-in Matrix app.'
+                : 'This device has completed first-time verification.',
             style: TextStyle(
               color: cs.onSurface.withValues(alpha: 0.78),
               height: 1.4,
@@ -474,42 +427,24 @@ class _DeviceSetupScreenState extends State<DeviceSetupScreen> {
           ),
           const SizedBox(height: 14),
           row(
-            'Secure backup',
-            settings.secureBackupAvailable ? 'Available' : 'Not configured',
-          ),
-          row(
-            'Room-key backup',
-            settings.keyBackupEnabled ? 'Available' : 'Not found',
-          ),
-          row(
-            'History access',
-            settings.encryptedHistoryReady
-                ? 'Ready on this device'
-                : 'Needs recovery',
-          ),
-          row(
             'This device',
             settings.isCurrentDeviceVerified
                 ? 'Verified'
                 : 'Needs verification',
           ),
+          row(
+            'Other sessions',
+            settings.hasOtherDeviceSessions
+                ? 'Available for verification'
+                : 'None found yet',
+          ),
+          row(
+            'Encryption',
+            settings.encryptionEnabled ? 'Enabled' : 'Unavailable',
+          ),
         ],
       ),
     );
-  }
-
-  Future<void> _restoreEncryptedHistory() async {
-    try {
-      final message = await Get.find<SettingsController>()
-          .restoreEncryptedHistory(_recoveryController.text);
-      _recoveryController.clear();
-      if (!mounted) return;
-      Get.snackbar('', message, snackPosition: SnackPosition.BOTTOM);
-      await _maybeFinishIfComplete();
-    } catch (error) {
-      if (!mounted) return;
-      Get.snackbar('Error', error.toString());
-    }
   }
 
   Future<void> _verifyDevice() async {
@@ -560,7 +495,6 @@ class _DeviceSetupScreenState extends State<DeviceSetupScreen> {
 
   @override
   void dispose() {
-    _recoveryController.dispose();
     super.dispose();
   }
 }

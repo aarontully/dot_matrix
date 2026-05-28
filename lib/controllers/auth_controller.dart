@@ -71,11 +71,10 @@ class AuthController extends GetxController with StateMixin<String?> {
     }
   }
 
-  Future<bool> _hasLocalMatrixSession() async {
+  Future<Map<String, dynamic>?> _getLocalMatrixAccount() async {
     final db = await _openMatrixDatabase();
     try {
-      final account = await db.getClient(_client.clientName);
-      return account != null;
+      return await db.getClient(_client.clientName);
     } finally {
       await db.close();
     }
@@ -95,6 +94,10 @@ class AuthController extends GetxController with StateMixin<String?> {
     return error is SocketException ||
         error is TimeoutException ||
         error is HttpException;
+  }
+
+  bool _isUploadKeyFailure(Object error) {
+    return error.toString().contains('Upload key failed');
   }
 
   void _debugLog(String message) {
@@ -191,9 +194,9 @@ class AuthController extends GetxController with StateMixin<String?> {
       }
 
       final homeserverUri = Uri.parse(homeserver);
-      final hasLocalMatrixSession = await _hasLocalMatrixSession();
+      final localAccount = await _getLocalMatrixAccount();
 
-      if (!hasLocalMatrixSession) {
+      if (localAccount == null) {
         _debugLog('Local Matrix database missing, resetting stored session.');
         await _resetStoredSession();
         change(null, status: RxStatus.success());
@@ -234,6 +237,7 @@ class AuthController extends GetxController with StateMixin<String?> {
         newUserID: userId,
         newDeviceID: deviceId,
         newDeviceName: deviceName,
+        newOlmAccount: localAccount['olm_account'] as String?,
         waitForFirstSync: false,
         waitUntilLoadCompletedLoaded: false,
       );
@@ -260,6 +264,14 @@ class AuthController extends GetxController with StateMixin<String?> {
         return;
       }
       if (_isInvalidTokenError(error)) {
+        await _resetStoredSession();
+        change(null, status: RxStatus.success());
+        return;
+      }
+      if (_isUploadKeyFailure(error)) {
+        _debugLog(
+          'Stored crypto session could not upload keys, resetting session.',
+        );
         await _resetStoredSession();
         change(null, status: RxStatus.success());
         return;
@@ -487,7 +499,7 @@ class AuthController extends GetxController with StateMixin<String?> {
       await _client.userDeviceKeysLoading;
 
       final ownKeys = _client.userDeviceKeys[userId];
-      if (isCurrentSessionTrusted(_client)) return;
+      if (isCurrentSessionVerified(_client)) return;
 
       final otherKeys =
           ownKeys?.deviceKeys.values
