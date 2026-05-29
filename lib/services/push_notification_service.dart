@@ -19,8 +19,6 @@ import '../utils/matrix_event_display.dart';
 const String _messagesChannelId = 'dot_matrix_messages';
 const String _mentionsChannelId = 'dot_matrix_mentions';
 const String _androidPusherAppId = 'com.housetully.dotmatrix.android';
-const String _iosPusherAppId = 'com.housetully.dotmatrix.ios';
-const String _macosPusherAppId = 'com.housetully.dotmatrix.macos';
 const String _notificationIcon = '@drawable/ic_notification';
 const String _notificationActionMarkRead = 'mark_read';
 const String _notificationActionOpen = 'open_room';
@@ -30,20 +28,10 @@ final FlutterLocalNotificationsPlugin _backgroundLocalNotifications =
 bool _backgroundNotificationsInitialized = false;
 
 String _firebaseSetupHint() {
-  switch (defaultTargetPlatform) {
-    case TargetPlatform.android:
-      return '[Push] Android Firebase setup requires '
-          '`android/app/google-services.json` so the Google Services Gradle '
-          'plugin can generate FirebaseOptions resources.';
-    case TargetPlatform.iOS:
-      return '[Push] iOS Firebase setup requires '
-          '`ios/Runner/GoogleService-Info.plist`, the Push Notifications '
-          'capability, Background Modes > Remote notifications, and an APNs '
-          'key/certificate uploaded in Firebase.';
-    default:
-      return '[Push] Background push also requires a working Matrix push '
-          'gateway URL to be registered for the signed-in device.';
-  }
+  return '[Push] Android Firebase setup requires '
+      '`android/app/google-services.json` so the Google Services Gradle '
+      'plugin can generate FirebaseOptions resources, plus a working Matrix '
+      'push gateway URL registered for the signed-in device.';
 }
 
 @pragma('vm:entry-point')
@@ -64,6 +52,10 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       notification?.title ?? data['sender_display_name'] ?? 'New message';
   var body =
       notification?.body ?? data['content']?['body'] ?? data['body'] ?? '';
+
+  if (body.toLowerCase().contains('decrypt')) {
+    body = 'Encrypted message';
+  }
 
   if (body.isEmpty && data['unread'] != null) {
     final count = int.tryParse(data['unread'].toString()) ?? 1;
@@ -178,15 +170,8 @@ class PushNotificationService with WidgetsBindingObserver {
         const androidSettings = AndroidInitializationSettings(
           _notificationIcon,
         );
-        const darwinSettings = DarwinInitializationSettings(
-          requestAlertPermission: false,
-          requestBadgePermission: false,
-          requestSoundPermission: false,
-        );
         const initSettings = InitializationSettings(
           android: androidSettings,
-          iOS: darwinSettings,
-          macOS: darwinSettings,
         );
         await _localNotifications
             .initialize(
@@ -267,31 +252,12 @@ class PushNotificationService with WidgetsBindingObserver {
           AndroidFlutterLocalNotificationsPlugin
         >()
         ?.requestNotificationsPermission();
-    final iosGranted = await _localNotifications
-        .resolvePlatformSpecificImplementation<
-          IOSFlutterLocalNotificationsPlugin
-        >()
-        ?.requestPermissions(alert: true, badge: true, sound: true);
-    final macGranted = await _localNotifications
-        .resolvePlatformSpecificImplementation<
-          MacOSFlutterLocalNotificationsPlugin
-        >()
-        ?.requestPermissions(alert: true, badge: true, sound: true);
-
-    granted =
-        granted ||
-        androidGranted == true ||
-        iosGranted == true ||
-        macGranted == true;
+    granted = granted || androidGranted == true;
 
     if (androidGranted == null &&
-        iosGranted == null &&
-        macGranted == null &&
         _messaging == null) {
       granted = switch (defaultTargetPlatform) {
-        TargetPlatform.android ||
-        TargetPlatform.iOS ||
-        TargetPlatform.macOS => false,
+        TargetPlatform.android => false,
         _ => true,
       };
     }
@@ -519,6 +485,9 @@ class PushNotificationService with WidgetsBindingObserver {
     final pushKey = await _loadCurrentPushKey(refreshedFcmToken: token);
     _currentToken = pushKey;
 
+    if (!Get.isRegistered<AuthController>()) {
+      return;
+    }
     final client = Get.find<AuthController>().client;
     if (client.accessToken == null || !_notificationsEnabled()) {
       return;
@@ -574,29 +543,13 @@ class PushNotificationService with WidgetsBindingObserver {
   Future<String?> _loadCurrentPushKey({String? refreshedFcmToken}) async {
     if (_messaging == null) return null;
 
-    switch (defaultTargetPlatform) {
-      case TargetPlatform.iOS:
-      case TargetPlatform.macOS:
-        final apnsToken = await _messaging!.getAPNSToken();
-        if (apnsToken != null && apnsToken.isNotEmpty) {
-          return apnsToken;
-        }
-        return refreshedFcmToken ?? await _messaging!.getToken();
-      case TargetPlatform.android:
-        return refreshedFcmToken ?? await _messaging!.getToken();
-      default:
-        return refreshedFcmToken ?? await _messaging!.getToken();
-    }
+    return refreshedFcmToken ?? await _messaging!.getToken();
   }
 
   String? _platformPusherAppId() {
     switch (defaultTargetPlatform) {
       case TargetPlatform.android:
         return _androidPusherAppId;
-      case TargetPlatform.iOS:
-        return _iosPusherAppId;
-      case TargetPlatform.macOS:
-        return _macosPusherAppId;
       default:
         return null;
     }
@@ -650,6 +603,7 @@ class PushNotificationService with WidgetsBindingObserver {
 
   bool _openRoomFromPayload(String payload) {
     final roomId = _roomIdFromPayload(payload);
+    final eventId = _eventIdFromPayload(payload);
     if (roomId == null || roomId == _activeRoomId) {
       return roomId != null;
     }
@@ -664,7 +618,10 @@ class PushNotificationService with WidgetsBindingObserver {
     if (room == null || Get.context == null) {
       return false;
     }
-    Get.to(() => ChatScreen(room: room), preventDuplicates: false);
+    Get.to(
+      () => ChatScreen(room: room, initialEventId: eventId),
+      preventDuplicates: false,
+    );
     _pendingOpenRoomPayload = null;
     return true;
   }
@@ -774,11 +731,8 @@ NotificationDetails _notificationDetails({required bool highlight}) {
       AndroidNotificationAction(_notificationActionMarkRead, 'Mark as read'),
     ],
   );
-  const darwinDetails = DarwinNotificationDetails();
   return NotificationDetails(
     android: androidDetails,
-    iOS: darwinDetails,
-    macOS: darwinDetails,
   );
 }
 
@@ -787,16 +741,9 @@ Future<void> _ensureBackgroundNotificationsInitialized() async {
 
   try {
     const androidSettings = AndroidInitializationSettings(_notificationIcon);
-    const darwinSettings = DarwinInitializationSettings(
-      requestAlertPermission: false,
-      requestBadgePermission: false,
-      requestSoundPermission: false,
-    );
     await _backgroundLocalNotifications.initialize(
       const InitializationSettings(
         android: androidSettings,
-        iOS: darwinSettings,
-        macOS: darwinSettings,
       ),
     );
 

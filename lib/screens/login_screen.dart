@@ -93,20 +93,34 @@ class _LoginScreenState extends State<LoginScreen> {
                     const SizedBox(height: 24),
                     TextField(
                       controller: _usernameController,
-                      decoration: const InputDecoration(labelText: 'Username'),
+                      decoration: const InputDecoration(
+                        labelText: 'Username',
+                        hintText: '@you:matrix.org or username',
+                      ),
+                      textInputAction: TextInputAction.next,
+                      textCapitalization: TextCapitalization.none,
+                      autocorrect: false,
+                      enableSuggestions: false,
                     ),
                     const SizedBox(height: 14),
                     TextField(
                       controller: _passwordController,
                       decoration: const InputDecoration(labelText: 'Password'),
                       obscureText: true,
+                      textInputAction: TextInputAction.next,
                     ),
                     const SizedBox(height: 14),
                     TextField(
                       controller: _homeserverController,
                       decoration: const InputDecoration(
                         labelText: 'Homeserver',
+                        hintText: 'https://matrix.org',
                       ),
+                      keyboardType: TextInputType.url,
+                      textInputAction: TextInputAction.done,
+                      autocorrect: false,
+                      enableSuggestions: false,
+                      onSubmitted: (_) => _login(),
                     ),
                     const SizedBox(height: 24),
                     authController.obx(
@@ -138,7 +152,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           ),
                           const SizedBox(height: 14),
                           Text(
-                            'Error: $error',
+                            _friendlyLoginError(error),
                             style: const TextStyle(color: Colors.red),
                           ),
                         ],
@@ -165,6 +179,28 @@ class _LoginScreenState extends State<LoginScreen> {
     }
 
     Get.find<AuthController>().login(username, password, homeserver);
+  }
+
+  String _friendlyLoginError(String? error) {
+    final raw = error ?? '';
+    final lower = raw.toLowerCase();
+    if (lower.contains('forbidden') ||
+        lower.contains('m_forbidden') ||
+        lower.contains('invalid password')) {
+      return 'Could not sign in. Check your username, password, and homeserver.';
+    }
+    if (lower.contains('format') ||
+        lower.contains('scheme') ||
+        lower.contains('uri')) {
+      return 'Enter a full homeserver URL, for example https://matrix.org.';
+    }
+    if (lower.contains('socket') ||
+        lower.contains('timeout') ||
+        lower.contains('failed host lookup') ||
+        lower.contains('connection')) {
+      return 'Could not reach that homeserver. Check the URL and your connection.';
+    }
+    return 'Could not sign in. Please check your details and try again.';
   }
 
   @override

@@ -8,7 +8,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'package:dot_matrix/widgets/dot_matrix_loader.dart';
 import 'package:get/get.dart';
-import 'package:hive_flutter/hive_flutter.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:matrix/matrix.dart';
@@ -32,19 +31,12 @@ import 'room_details_screen.dart';
 
 class ChatScreen extends StatefulWidget {
   final AppRoom room;
+  final String? initialEventId;
 
-  const ChatScreen({super.key, required this.room});
+  const ChatScreen({super.key, required this.room, this.initialEventId});
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
-}
-
-class _ScheduledMessage {
-  final String text;
-  final DateTime sendAt;
-  final AppEvent? replyTo;
-
-  _ScheduledMessage({required this.text, required this.sendAt, this.replyTo});
 }
 
 class _ResolvedTimelineView {
@@ -74,7 +66,6 @@ class _ChatScreenState extends State<ChatScreen> {
   static const double _pickedImageMaxDimension = 2048;
   static const int _pickedImageQuality = 85;
   static const int _previewDecodeSize = 180;
-  static const String _settingsBoxName = 'dot_matrix_settings';
   static final DateFormat _dateHeaderFormat = DateFormat.yMMMMd();
 
   final _messageController = TextEditingController();
@@ -92,8 +83,6 @@ class _ChatScreenState extends State<ChatScreen> {
   File? _recordedAudioFile;
   AppEvent? _replyingToEvent;
   AppEvent? _editingEvent;
-  final List<_ScheduledMessage> _scheduledMessages = [];
-  Timer? _scheduleTimer;
   Timer? _typingHeartbeatTimer;
   final _messageKeys = <String, GlobalKey>{};
   List<AppEvent>? _cachedTimelineSourceMessages;
@@ -110,6 +99,11 @@ class _ChatScreenState extends State<ChatScreen> {
   void initState() {
     super.initState();
     PushNotificationService().setActiveRoom(widget.room.id);
+    if (widget.initialEventId != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _tryScrollToInitialEvent();
+      });
+    }
     _messageController.addListener(_handleComposerChanged);
     _messageFocusNode.addListener(() {
       final focused = _messageFocusNode.hasFocus;
@@ -127,15 +121,9 @@ class _ChatScreenState extends State<ChatScreen> {
       _markRoomAsRead();
       _scheduleHistoryPrefetchCheck();
     });
-    // AudioRecorder initialized on first use
-    _scheduleTimer = Timer.periodic(
-      const Duration(seconds: 10),
-      (_) => _checkScheduledMessages(),
-    );
     _scrollController.addListener(() {
       _maybeLoadMoreHistory();
     });
-    unawaited(_loadScheduledMessages());
   }
 
   /// Opening a chat should advance the read marker so the room list and
@@ -574,10 +562,6 @@ class _ChatScreenState extends State<ChatScreen> {
         mainAxisSize: MainAxisSize.min,
         children: [
           _buildTypingIndicator(cs),
-          if (_scheduledMessages.isNotEmpty) ...[
-            _buildScheduledBanner(),
-            const SizedBox(height: 8),
-          ],
           AnimatedCrossFade(
             firstChild: const SizedBox(width: double.infinity, height: 0),
             secondChild: _buildAttachmentMenu(cs),
@@ -685,7 +669,6 @@ class _ChatScreenState extends State<ChatScreen> {
                     bg: cs.primary,
                     fg: cs.onPrimary,
                     onTap: _sendMessage,
-                    onLongPress: _scheduleSend,
                   ),
                 ] else ...[
                   const SizedBox(width: 8),
@@ -1290,14 +1273,8 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!await _confirmSendToUnverifiedDevices(room)) return;
 
       HapticFeedback.lightImpact();
-      _messageController.clear();
-      setState(() => _pendingImages.clear());
       final replyTo = _replyingToEvent;
       final editing = _editingEvent;
-      setState(() {
-        _replyingToEvent = null;
-        _editingEvent = null;
-      });
       if (editing != null && text.isNotEmpty) {
         await room.sendTextEvent(text, editEventId: editing.rawEvent.eventId);
       } else if (replyTo != null && text.isNotEmpty) {
@@ -1305,17 +1282,33 @@ class _ChatScreenState extends State<ChatScreen> {
       } else if (text.isNotEmpty) {
         await room.sendTextEvent(text);
       }
+      if (mounted && text.isNotEmpty) {
+        _messageController.clear();
+        setState(() {
+          _replyingToEvent = null;
+          _editingEvent = null;
+        });
+      }
       for (final media in images) {
-        if (_isVideoFile(media)) {
-          await _sendVideoFile(File(media.path), mimeType: media.mimeType);
-        } else {
-          await _sendImageFile(File(media.path), mimeType: media.mimeType);
+        final sent = _isVideoFile(media)
+            ? await _sendVideoFile(File(media.path), mimeType: media.mimeType)
+            : await _sendImageFile(File(media.path), mimeType: media.mimeType);
+        if (mounted && sent) {
+          setState(() => _pendingImages.remove(media));
         }
       }
     } catch (error) {
       if (!mounted) return;
       Get.snackbar('Error', 'Send failed: $error');
     }
+  }
+
+  void _tryScrollToInitialEvent() {
+    if (widget.initialEventId == null) return;
+    final liveRoom = _findLiveRoom();
+    final messages = liveRoom?.messages ?? widget.room.messages;
+    if (messages.isEmpty) return;
+    _scrollToEvent(widget.initialEventId!, messages);
   }
 
   void _scrollToEvent(String eventId, List<AppEvent> messages) {
@@ -1504,6 +1497,30 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _deleteMessage(AppEvent event) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete message?'),
+        content: const Text(
+          'This removes the message from the chat for everyone where the homeserver allows it.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(context).colorScheme.error,
+            ),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
     try {
       final client = Get.find<AuthController>().client;
       final room = client.getRoomById(widget.room.id);
@@ -1633,201 +1650,6 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  Widget _buildScheduledBanner() {
-    final cs = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: BoxDecoration(
-        color: cs.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Scheduled',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-              color: cs.primary,
-            ),
-          ),
-          const SizedBox(height: 4),
-          ..._scheduledMessages.map((sm) {
-            final time = DateFormat.jm().format(sm.sendAt);
-            return Row(
-              children: [
-                Icon(Icons.schedule, size: 14, color: cs.onSurfaceVariant),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    '${sm.text} · $time',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
-                  ),
-                ),
-                InkWell(
-                  onTap: () {
-                    setState(() => _scheduledMessages.remove(sm));
-                    unawaited(_persistScheduledMessages());
-                  },
-                  child: Icon(
-                    Icons.close,
-                    size: 16,
-                    color: cs.onSurfaceVariant,
-                  ),
-                ),
-              ],
-            );
-          }),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _scheduleSend() async {
-    final text = _messageController.text.trim();
-    if (text.isEmpty) return;
-
-    final now = DateTime.now();
-    final pickedDate = await showDatePicker(
-      context: context,
-      initialDate: now,
-      firstDate: now,
-      lastDate: now.add(const Duration(days: 30)),
-    );
-    if (pickedDate == null || !mounted) return;
-
-    final pickedTime = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay.fromDateTime(now.add(const Duration(minutes: 5))),
-    );
-    if (pickedTime == null || !mounted) return;
-
-    final sendAt = DateTime(
-      pickedDate.year,
-      pickedDate.month,
-      pickedDate.day,
-      pickedTime.hour,
-      pickedTime.minute,
-    );
-
-    if (sendAt.isBefore(now)) {
-      if (!mounted) return;
-      Get.snackbar('Error', 'Scheduled time must be in the future');
-      return;
-    }
-
-    setState(() {
-      _scheduledMessages.add(
-        _ScheduledMessage(
-          text: text,
-          sendAt: sendAt,
-          replyTo: _replyingToEvent,
-        ),
-      );
-      _messageController.clear();
-      _replyingToEvent = null;
-    });
-    await _persistScheduledMessages();
-
-    Get.snackbar(
-      '',
-      'Message scheduled for ${DateFormat.jm().format(sendAt)}',
-      snackPosition: SnackPosition.BOTTOM,
-      duration: const Duration(seconds: 2),
-    );
-  }
-
-  Future<void> _checkScheduledMessages() async {
-    if (_scheduledMessages.isEmpty) return;
-    final now = DateTime.now();
-    final due = _scheduledMessages
-        .where((sm) => sm.sendAt.isBefore(now))
-        .toList();
-
-    for (final sm in due) {
-      try {
-        final client = Get.find<AuthController>().client;
-        final room = client.getRoomById(widget.room.id);
-        if (room == null) continue;
-        if (sm.replyTo != null) {
-          await room.sendTextEvent(sm.text, inReplyTo: sm.replyTo!.rawEvent);
-        } else {
-          await room.sendTextEvent(sm.text);
-        }
-      } catch (e) {
-        debugPrint('Scheduled send failed: $e');
-      }
-    }
-
-    if (due.isNotEmpty && mounted) {
-      setState(
-        () => _scheduledMessages.removeWhere((sm) => sm.sendAt.isBefore(now)),
-      );
-      await _persistScheduledMessages();
-    }
-  }
-
-  Future<void> _loadScheduledMessages() async {
-    final box = await Hive.openBox(_settingsBoxName);
-    final raw = box.get(_scheduledMessageStorageKey);
-    if (raw is! List || raw.isEmpty || !mounted) {
-      return;
-    }
-
-    final sourceMessages = _currentSearchSourceMessages();
-    final loaded = raw.whereType<Map>().map((entry) {
-      final sendAtRaw = entry['send_at']?.toString();
-      final sendAt = sendAtRaw == null ? null : DateTime.tryParse(sendAtRaw);
-      if (sendAt == null) {
-        return null;
-      }
-      final replyEventId = entry['reply_to_event_id']?.toString();
-      final replyTo = replyEventId == null
-          ? null
-          : sourceMessages.firstWhereOrNull(
-              (message) => message.rawEvent.eventId == replyEventId,
-            );
-      return _ScheduledMessage(
-        text: entry['text']?.toString() ?? '',
-        sendAt: sendAt,
-        replyTo: replyTo,
-      );
-    }).whereType<_ScheduledMessage>().toList()
-      ..sort((a, b) => a.sendAt.compareTo(b.sendAt));
-
-    setState(() {
-      _scheduledMessages
-        ..clear()
-        ..addAll(loaded);
-    });
-  }
-
-  Future<void> _persistScheduledMessages() async {
-    final box = await Hive.openBox(_settingsBoxName);
-    if (_scheduledMessages.isEmpty) {
-      await box.delete(_scheduledMessageStorageKey);
-      return;
-    }
-
-    await box.put(
-      _scheduledMessageStorageKey,
-      _scheduledMessages
-          .map(
-            (message) => <String, dynamic>{
-              'text': message.text,
-              'send_at': message.sendAt.toIso8601String(),
-              'reply_to_event_id': message.replyTo?.rawEvent.eventId,
-            },
-          )
-          .toList(),
-    );
-  }
-
-  String get _scheduledMessageStorageKey => 'scheduled_messages::${widget.room.id}';
-
   Future<void> _takePhoto() async {
     if (!await requestCameraPermission(context)) return;
     try {
@@ -1951,26 +1773,26 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  Future<void> _sendImageFile(File file, {String? mimeType}) async {
+  Future<bool> _sendImageFile(File file, {String? mimeType}) async {
     try {
       if (!await file.exists()) {
-        if (!mounted) return;
+        if (!mounted) return false;
         Get.snackbar('Error', 'Image file not found');
-        return;
+        return false;
       }
       final fileSize = await file.length();
       if (fileSize == 0) {
-        if (!mounted) return;
+        if (!mounted) return false;
         Get.snackbar('Error', 'Image file is empty');
-        return;
+        return false;
       }
       final bytes = await file.readAsBytes();
       final client = Get.find<AuthController>().client;
       final room = client.getRoomById(widget.room.id);
       if (room == null) {
-        if (!mounted) return;
+        if (!mounted) return false;
         Get.snackbar('Error', 'Room not found');
-        return;
+        return false;
       }
       final matrixFile = await MatrixImageFile.create(
         bytes: bytes,
@@ -1982,32 +1804,34 @@ class _ChatScreenState extends State<ChatScreen> {
         matrixFile,
         shrinkImageMaxDimension: isGif ? null : 1600,
       );
+      return true;
     } catch (error) {
-      if (!mounted) return;
+      if (!mounted) return false;
       Get.snackbar('Error', 'Image send failed: $error');
+      return false;
     }
   }
 
-  Future<void> _sendVideoFile(File file, {String? mimeType}) async {
+  Future<bool> _sendVideoFile(File file, {String? mimeType}) async {
     try {
       if (!await file.exists()) {
-        if (!mounted) return;
+        if (!mounted) return false;
         Get.snackbar('Error', 'Video file not found');
-        return;
+        return false;
       }
       final fileSize = await file.length();
       if (fileSize == 0) {
-        if (!mounted) return;
+        if (!mounted) return false;
         Get.snackbar('Error', 'Video file is empty');
-        return;
+        return false;
       }
       final bytes = await file.readAsBytes();
       final client = Get.find<AuthController>().client;
       final room = client.getRoomById(widget.room.id);
       if (room == null) {
-        if (!mounted) return;
+        if (!mounted) return false;
         Get.snackbar('Error', 'Room not found');
-        return;
+        return false;
       }
       final metadata = await loadVideoMetadata(file);
       final thumbnail = await createMatrixVideoThumbnail(
@@ -2023,9 +1847,11 @@ class _ChatScreenState extends State<ChatScreen> {
         duration: metadata.durationMs,
       );
       await room.sendFileEvent(matrixFile, thumbnail: thumbnail);
+      return true;
     } catch (error) {
-      if (!mounted) return;
+      if (!mounted) return false;
       Get.snackbar('Error', 'Video send failed: $error');
+      return false;
     }
   }
 
@@ -2309,7 +2135,6 @@ class _ChatScreenState extends State<ChatScreen> {
     _messageFocusNode.dispose();
     _scrollController.dispose();
     _audioRecorder.dispose();
-    _scheduleTimer?.cancel();
     super.dispose();
   }
 

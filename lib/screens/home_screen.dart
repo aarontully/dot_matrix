@@ -50,8 +50,11 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   int _selectedIndex = 0;
-  String _searchQuery = '';
   int _menuRefreshToken = 0;
+  late final Map<_HomeTab, TextEditingController> _searchControllers = {
+    _HomeTab.chats: TextEditingController(),
+    _HomeTab.activity: TextEditingController(),
+  };
 
   @override
   void initState() {
@@ -59,6 +62,14 @@ class _HomeScreenState extends State<HomeScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       PushNotificationService().tryOpenPendingRoom();
     });
+  }
+
+  @override
+  void dispose() {
+    for (final controller in _searchControllers.values) {
+      controller.dispose();
+    }
+    super.dispose();
   }
 
   @override
@@ -154,12 +165,20 @@ class _HomeScreenState extends State<HomeScreen> {
               },
             ),
             IconButton(
-              icon: Icon(
-                Icons.filter_list_outlined,
-                color:
-                    Theme.of(context).appBarTheme.foregroundColor ??
-                    Theme.of(context).colorScheme.onSurface,
-              ),
+              icon: Obx(() {
+                final hasSpaceFilter =
+                    Get.find<RoomController>().selectedSpaceId.value != null;
+                return Badge(
+                  isLabelVisible: hasSpaceFilter,
+                  smallSize: 8,
+                  child: Icon(
+                    Icons.filter_list_outlined,
+                    color:
+                        Theme.of(context).appBarTheme.foregroundColor ??
+                        Theme.of(context).colorScheme.onSurface,
+                  ),
+                );
+              }),
               onPressed: () => _showSpaceFilterSheet(context),
             ),
             IconButton(
@@ -191,7 +210,9 @@ class _HomeScreenState extends State<HomeScreen> {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: TextField(
-        onChanged: (value) => setState(() => _searchQuery = value.trim()),
+        key: ValueKey(tab),
+        controller: _searchControllers[tab],
+        onChanged: (_) => setState(() {}),
         style: TextStyle(color: cs.onSurface),
         decoration: InputDecoration(
           hintText: hintText,
@@ -239,6 +260,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     groupValue: selectedId,
                     onTap: (value) {
                       roomController.selectedSpaceId.value = value;
+                      if (mounted) setState(() {});
                       Navigator.pop(ctx);
                     },
                   ),
@@ -249,6 +271,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       groupValue: selectedId,
                       onTap: (value) {
                         roomController.selectedSpaceId.value = value;
+                        if (mounted) setState(() {});
                         Navigator.pop(ctx);
                       },
                     );
@@ -287,7 +310,7 @@ class _HomeScreenState extends State<HomeScreen> {
         );
       }
 
-      if (_searchQuery.isEmpty) {
+      if (_searchQueryFor(_HomeTab.chats).isEmpty) {
         return _buildEmptyState(
           context,
           icon: Icons.forum_outlined,
@@ -354,7 +377,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ],
         );
-      } else if (_searchQuery.isEmpty) {
+      } else if (_searchQueryFor(_HomeTab.activity).isEmpty) {
         scrollBody = ListView(
           physics: const AlwaysScrollableScrollPhysics(),
           children: [
@@ -1043,7 +1066,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   List<AppRoom> _filterRooms(List<AppRoom> rooms) {
-    final normalizedQuery = _searchQuery.toLowerCase();
+    final normalizedQuery = _searchQueryFor(_HomeTab.chats).toLowerCase();
     var filteredRooms = normalizedQuery.isEmpty
         ? List<AppRoom>.from(rooms)
         : rooms.where((room) {
@@ -1075,7 +1098,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   List<_ActivityItem> _filterActivityItems(List<_ActivityItem> items) {
-    final normalizedQuery = _searchQuery.toLowerCase();
+    final normalizedQuery = _searchQueryFor(_HomeTab.activity).toLowerCase();
     if (normalizedQuery.isEmpty) {
       return items;
     }
@@ -1295,6 +1318,10 @@ class _HomeScreenState extends State<HomeScreen> {
     return withoutServer.startsWith('@')
         ? withoutServer.substring(1)
         : withoutServer;
+  }
+
+  String _searchQueryFor(_HomeTab tab) {
+    return _searchControllers[tab]?.text.trim() ?? '';
   }
 
   String _menuEncryptionSubtitle() {

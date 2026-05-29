@@ -289,6 +289,7 @@ class AuthController extends GetxController with StateMixin<String?> {
   ) async {
     change(null, status: RxStatus.loading());
     try {
+      await _clearMatrixCache();
       _client = await _createClient();
       await _client.checkHomeserver(Uri.parse(homeserver));
       final resolvedHomeserver = _client.homeserver ?? Uri.parse(homeserver);

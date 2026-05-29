@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## [v1.0.12-alpha] - 2026-05-29
+
+### Changed
+- **Android-only release focus** — removed the web, iOS, macOS, Linux, and Windows Flutter platform folders and updated project metadata/docs so this release only promises Android support.
+- **Push notification platform scope** — notification setup and pusher registration now use Android-only Firebase/FCM paths instead of carrying inactive iOS/macOS branches.
+- **Login clarity** — the login form now uses mobile-friendly input hints and shows user-readable sign-in errors instead of raw Matrix/URI exception text.
+
+### Removed
+- **Scheduled message composer shortcut** — removed the long-press scheduled-send flow because it only ran while the current chat screen was alive and could mislead users into thinking messages would send after leaving the chat or closing the app.
+
+### Fixed
+- **Draft preservation on send failure** — text and staged media now stay in the composer until their send path succeeds, so a network or Matrix error no longer wipes the user's draft.
+- **Message deletion safety** — deleting a message now asks for confirmation before redacting it from the room.
+- **Tab search leakage** — Chats and Activity now keep separate search state, so a search in one tab no longer unexpectedly filters the other tab.
+- **Space filter visibility** — the Chats filter button now shows an active badge when a Space filter is applied.
+- **Android background notifications** — `FirebaseMessaging.onBackgroundMessage` is now registered before `runApp` so background FCM handlers are wired up reliably on `firebase_messaging` v14+.
+- **Token refresh crash** — FCM token refreshes no longer crash when `AuthController` is not yet registered (e.g. app started from background), so the Matrix pusher stays up to date after token rotations.
+- **Encrypted message notification text** — background push notifications no longer show placeholder text like "decrypt this message" for encrypted events; they now display "Encrypted message" instead.
+- **Notification tap navigation** — tapping a notification now opens the specific message it references instead of only opening the room. `ChatScreen` accepts an optional `initialEventId` and scrolls to that message on entry.
+- **First-time device setup missing after reinstall** — disabled Android Auto Backup in `AndroidManifest.xml`. Previously, Android could restore a stale Matrix database from an old install. The Matrix SDK then failed to initialize encryption for the new device, making `encryptionEnabled` false and silently skipping the verification onboarding screen.
+
 ## [v1.0.11-alpha] - 2026-05-29
 
 ### Changed

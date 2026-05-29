@@ -1,15 +1,15 @@
 <h1 align="center">Dot Matrix</h1>
 
 <p align="center">
-  <b>A modern, cross-platform Matrix chat client built with Flutter.</b><br>
-  Secure, fast, and beautifully designed for every device you own.
+  <b>A modern Android Matrix chat client built with Flutter.</b><br>
+  Secure, fast, and designed for everyday mobile messaging.
 </p>
 
 ## What is Dot Matrix?
 
 Dot Matrix is a **decentralised chat application** that connects you to the [Matrix](https://matrix.org) ecosystem. Unlike traditional messaging apps, Matrix gives you full control over your conversations — no single company owns your data, and you can host your own server or join any public homeserver.
 
-Built from the ground up in **Flutter**, Dot Matrix runs natively on **Android, iOS, macOS, Linux, Windows, and Web** — one codebase, every platform.
+Built from the ground up in **Flutter**, Dot Matrix currently targets **Android only** while the mobile experience is refined.
 
 ---
 
@@ -31,7 +31,6 @@ Built from the ground up in **Flutter**, Dot Matrix runs natively on **Android, 
 - **Swipe to Reply** — swipe any message to start a threaded reply
 - **Message Actions** — reply, copy, forward, delete, edit, or react with emoji
 - **Quick Reactions** — double-tap a message to open the emoji picker
-- **Scheduled Messages** — compose a message now and send it later
 - **Typing Indicators** — see when others are typing (without broadcasting your own)
 
 ### Organized & Polished UI
@@ -68,22 +67,17 @@ Built from the ground up in **Flutter**, Dot Matrix runs natively on **Android, 
 | **Protocol** | Matrix SDK (`matrix` package) |
 | **Encryption** | flutter_olm + flutter_openssl_crypto |
 | **Local Cache** | Hive |
-| **Media** | Cached Network Image, Photo View, Just Audio, Flutter Sound |
+| **Media** | Cached Network Image, Photo View, Audioplayers, Record |
 | **Pickers** | Image Picker, File Picker |
 | **Navigation** | GetX named routes |
 
 ---
 
-## Supported Platforms
+## Supported Platform
 
 | Platform | Status |
 |----------|--------|
 | Android | ✅ Supported |
-| iOS | ✅ Supported |
-| macOS | ✅ Supported |
-| Linux | ✅ Supported |
-| Windows | ✅ Supported |
-| Web | ✅ Supported |
 
 ---
 
@@ -109,34 +103,17 @@ flutter run
 # Android
 flutter build apk
 flutter build appbundle
-
-# iOS / macOS
-flutter build ios
-flutter build macos
-
-# Linux
-flutter build linux
-
-# Windows
-flutter build windows
-
-# Web
-flutter build web
 ```
 
 ### Push Notifications Setup
 
-Dot Matrix now has the client-side code for notification permissions, local alerts, and Matrix pusher registration, but full out-of-app delivery still needs native platform setup and a Matrix push gateway:
+Dot Matrix has the Android client-side code for notification permissions, local alerts, and Matrix pusher registration, but full out-of-app delivery still needs native Firebase setup and a Matrix push gateway:
 
 1. Android:
    Place your Firebase config at `android/app/google-services.json`.
    The file must match the Android package ID `com.housetully.dotmatrix`.
-2. iOS:
-   Add `GoogleService-Info.plist` to `ios/Runner/`.
-   In Xcode, enable the `Push Notifications` capability and `Background Modes` with `Remote notifications`.
-   In Firebase Console, upload an APNs authentication key or certificate for the iOS app.
-3. Matrix delivery:
-   Your homeserver/device still needs a working push gateway URL, such as a Sygnal deployment wired to FCM/APNs.
+2. Matrix delivery:
+   Your homeserver/device still needs a working push gateway URL, such as a Sygnal deployment wired to FCM.
    Dot Matrix will try to auto-reuse an existing Matrix HTTP pusher gateway already registered on the account.
    If there is no existing pusher to copy, Dot Matrix can fall back to an app-wide default gateway configured at build time with `--dart-define=DOT_MATRIX_DEFAULT_PUSH_GATEWAY_URL=https://push.example.com/_matrix/push/v1/notify`.
    Manual entry in Settings is now only an advanced override.
@@ -168,7 +145,7 @@ If Android logs `Failed to load FirebaseOptions from resource`, the usual cause 
 
 - [x] End-to-end encryption
 - [x] Voice messages
-- [x] Scheduled messages
+- [ ] Scheduled messages
 - [x] Message reactions & edits
 - [x] Reply threads
 - [ ] Push notifications

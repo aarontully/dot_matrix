@@ -197,7 +197,7 @@ class _NotificationSettingsScreenState extends State<NotificationSettingsScreen>
                 ),
                 const SizedBox(height: 16),
                 Text(
-                  'Local alerts work while DotMatrix is running. Full background push still depends on Android/iPhone Firebase or APNs setup plus a working Matrix push gateway.',
+                  'Local alerts work while DotMatrix is running. Full Android background push still depends on Firebase setup plus a working Matrix push gateway.',
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: theme.colorScheme.onSurface.withValues(alpha: 0.76),
                     height: 1.4,
